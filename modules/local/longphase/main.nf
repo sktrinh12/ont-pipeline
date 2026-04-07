@@ -81,19 +81,19 @@ process LONGPHASE_PHASE {
 /*
 ========================================================================================
     MODULE: LONGPHASE_HAPLOTAG
-    Purpose: Assign HP (haplotype) tags to reads in a BAM using the phased VCF.
-             Reads are tagged HP:i:1, HP:i:2, or HP:i:0 (unphased).
+    Purpose: Physical grouping of sequencing reads into parental haplotypes.
+             Assigns 'HP' tags (HP:1, HP:2) to reads by matching them to a phased VCF.
 
-    The haplotagged BAM is the critical output for:
-      - Per-haplotype methylation profiling (modkit --partition-tag HP)
-      - Allele-specific methylation (ASM) — e.g., imprinted loci
-      - Trio phasing validation
-      - De novo assembly of individual haplotypes (e.g., with hifiasm --ul)
+    BIOLOGICAL UTILITY:
+      - Allele-Specific Methylation (ASM): Enables 'modkit --partition-tag HP' to 
+        detect differential methylation at imprinted or X-inactivated loci.
+      - Phased Variant Calling: Improves structural variant (SV) detection.
+      - IGV Visualization: Allows "Group by: HP" to see distinct parental read streams.
 
-    Expected haplotagging rate for ONT WGS (30×, R10.4.1):
-      - ~85–92% of mapped reads assigned to a haplotype
-      - Unassigned reads (HP:i:0) are typically in homozygous regions or
-        repetitive elements where SNP density is insufficient for phasing
+    EXPECTED PERFORMANCE (ONT 30x R10.4.1):
+      - ~85–92% Tagging Rate: Standard for human WGS.
+      - HP:0 (Unassigned): Occurs in homozygous regions or low-complexity repeats 
+        where a lack of heterozygous SNPs prevents parental assignment.
 ========================================================================================
 */
 
