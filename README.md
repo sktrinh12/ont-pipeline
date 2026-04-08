@@ -394,8 +394,6 @@ glnexus_cli \
 3. The pipeline will inject GAM reads into graph via `vg augment` before ODGI build
 4. odgi viz will use `-A` prefix and `-S` flags to show strand colors for aligned reads
 
-**Known issue**: `vg convert -f` corrupts path names when augmenting GBZ graphs, causing odgi build to fail.
-
 
 > This pipeline is validated on a Chr22 subset of the HG002 HPRC dataset (GIAB benchmark sample) using the following:
 > - ~15× coverage of Chr22 (ONT R10.4.1 SUP)
