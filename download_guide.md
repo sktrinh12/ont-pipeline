@@ -152,7 +152,7 @@ for cram in $(aws s3 ls --no-sign-request --recursive "s3://ont-open-data/giab_2
     | grep "\.pass\.cram$" \
     | awk '{print "s3://ont-open-data/" $4}'); do
     samtools view -@ 8 -u -T "$REF" "$cram" chr22 | samtools fastq -
-done | gzip > hg002_chr22_merged.fastq.gz
+done | gzip > HG002_chr22_extracted.fastq.gz
 ```
 * **Why `-T`?** The CRAM header contains a hardcoded path to the original author's local directory. `-T` forces `samtools` to use local copy for decompression.
 
@@ -206,7 +206,7 @@ vg index -t 16 -j chr22.dist chr22.gbz
 # -z ensures "zipcodes" are stored in a file so Giraffe doesn't rebuild them later
 vg minimizer -t 16 -d chr22.dist -o chr22.min -z chr22.zip chr22.gbz
 
-# Map reads using Giraffe (Mapping to Node Space)
+# Test map reads using Giraffe (Mapping to Node Space)
 # Note: --named-coordinates is REMOVED to prevent the translation error
 vg giraffe -t 10 \
     -Z /data/scratch/temp/chr22.gbz \
