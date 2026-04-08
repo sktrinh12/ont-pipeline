@@ -29,7 +29,6 @@ other
 docs/_build/
 ./*.txt
 errors/
-misc/
 cloud/my-*
 docker-test
 docker/dist
