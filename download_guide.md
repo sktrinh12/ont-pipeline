@@ -166,10 +166,7 @@ Aligning to a graph reduces "reference bias" by accounting for structural variat
 # Download Chr22 graph (.vg)
 wget https://s3-us-west-2.amazonaws.com/human-pangenomics/pangenomes/freeze/freeze1/minigraph-cactus/hprc-v1.1-mc-chm13/hprc-v1.1-mc-chm13.chroms/chr22.vg
 
-# 1. Create a chopped GFA
-# vg mod -X 1024: Breaks long nodes into segments of max 1024bp.
-# This is required because the Distance Index (Step 4) cannot handle 
-# nodes longer than ~1024bp without crashing or becoming massive
+# 1. Convert to GFA for path renaming
 # Use a "Hard GFA Rewrite" to force the reference path into the correct format (`Sample#Haplotype#Contig`).
 vg view chr22.vg > chr22.gfa
 
@@ -177,32 +174,22 @@ vg view chr22.vg > chr22.gfa
 # This changes "CHM13#chr22" to "CHM13#0#chr22" (adding the #0# haplotype)
 sed 's/CHM13#chr22/CHM13#0#chr22/g' chr22.gfa > chr22.fixed.gfa
 
-# Convert the fixed GFA back to a VG graph using the modern 'convert' tool
-# -p specifies the Protobuf (.vg) output format
-vg convert -g chr22.fixed.gfa -p > chr22.renamed.vg
-
-# Verify the rename worked (Crucial: Must show CHM13#0#chr22)
-vg paths -x chr22.renamed.vg -L | grep "CHM13"
-
-# Chop the graph into 1024bp segments (Recommended for Giraffe/Surject)
-vg mod -X 1024 chr22.renamed.vg > chr22.chopped.vg
-
-# 2. Structural Indexing (The "Named" Chain)
-# Build the XG first because it acts as the "Translation Table" source for the final GBZ. This preserves the segment-to-node name mapping
-vg index -x chr22.chopped.xg chr22.chopped.vg
-
-# Build the GBWT from the XG paths
-# -E indexes the embedded reference paths
-vg gbwt -x chr22.chopped.xg -E -o chr22.gbwt
-
-# Build the GBZ (The final Giraffe graph)
+# Create a high-performance GBZ file directly from GFA
 # --set-reference CHM13 tags the coordinate system correctly
-vg gbwt -x chr22.chopped.xg -g chr22.gbz --set-reference CHM13 chr22.gbwt
+vg gbwt -G chr22.fixed.gfa -g chr22.gbz --set-reference CHM13
+
+# Verify the rename worked (Crucial: Output must be exactly CHM13#0#chr22)
+vg paths -x chr22.gbz -L | grep "CHM13"
+
+# Create the auxiliary files needed for fast pangenome mapping
 
 # Build the Distance Index
+# Build the Distance Index (-j)
+# This is required for Giraffe to handle distance-based clustering of seeds
 vg index -t 16 -j chr22.dist chr22.gbz
 
 # Build the Minimizer Index with Zipcodes
+# -d uses the distance index to inform minimizer selection
 # -z ensures "zipcodes" are stored in a file so Giraffe doesn't rebuild them later
 vg minimizer -t 16 -d chr22.dist -o chr22.min -z chr22.zip chr22.gbz
 
@@ -217,11 +204,11 @@ vg giraffe -t 10 \
     --output-format gam > test_map.gam
 
 # Surject GAM to BAM (Mapping to Reference Space)
-# --into-ref CHM13 finds the CHM13#0#chr22 path and provides linear coordinates
+# --into-ref MUST match the path name found in Step 2
 vg surject -t 4 \
     -x chr22.gbz \
     -b \
-    --into-ref CHM13 \
+    --into-ref CHM13#0#chr22 \
     test_map.gam > out.surjected.bam
 ```
 
@@ -236,7 +223,6 @@ samtools view -H out.surjected.bam | grep "SN"
 
 # Check that reads have valid chromosome names and positions
 samtools view out.surjected.bam | head -n 10
-```
 ```
 
 
