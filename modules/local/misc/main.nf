@@ -394,7 +394,7 @@ process MINIMAP2_ALIGN {
     publishDir  "${params.outdir}/alignment/${meta.id}", mode: 'copy',
                 saveAs: { fn -> fn.endsWith('.bam') ? fn : null }
 
-    container   'sktrinh12/biotools:latest'
+    container   'sktrinh12/minimap2:latest'
 
     input:
     tuple val(meta), path(reads)
