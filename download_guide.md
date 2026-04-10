@@ -162,49 +162,78 @@ done | gzip > HG002_chr22_extracted.fastq.gz
 Aligning to a graph reduces "reference bias" by accounting for structural variations in the population.
 
 ### Step A: Prepare the Graph (HPRC Freeze 1)
+
 ```bash
 # Download Chr22 graph (.vg)
 wget https://s3-us-west-2.amazonaws.com/human-pangenomics/pangenomes/freeze/freeze1/minigraph-cactus/hprc-v1.1-mc-chm13/hprc-v1.1-mc-chm13.chroms/chr22.vg
 
 # 1. Convert to GFA for path renaming
-# Use a "Hard GFA Rewrite" to force the reference path into the correct format (`Sample#Haplotype#Contig`).
+# vg view is the standard for .vg -> .gfa conversion
 vg view chr22.vg > chr22.gfa
 
-# Physically rename the path in the GFA to satisfy the HPRC/Ducky metadata parser
-# This changes "CHM13#chr22" to "CHM13#0#chr22" (adding the #0# haplotype)
+# Physically rename the path in the GFA to satisfy HPRC metadata standards
+# This adds the Haplotype index (#0) which is required by many downstream tools
 sed 's/CHM13#chr22/CHM13#0#chr22/g' chr22.gfa > chr22.fixed.gfa
 
-# Create a high-performance GBZ file directly from GFA
-# --set-reference CHM13 tags the coordinate system correctly
+# Create high-performance GBZ file
+# --set-reference CHM13 tags CHM13 as the "Reference Sense" coordinate system
 vg gbwt -G chr22.fixed.gfa -g chr22.gbz --set-reference CHM13
 
-# Verify the rename worked (Crucial: Output must be exactly CHM13#0#chr22)
-vg paths -x chr22.gbz -L | grep "CHM13"
-
-# Create the auxiliary files needed for fast pangenome mapping
-
-# Build the Distance Index
-# Build the Distance Index (-j)
-# This is required for Giraffe to handle distance-based clustering of seeds
+# 2. Build Auxiliary Indices for Giraffe
+# Distance Index (-j) - required for seed clustering
 vg index -t 16 -j chr22.dist chr22.gbz
 
-# Build the Minimizer Index with Zipcodes
-# -d uses the distance index to inform minimizer selection
-# -z ensures "zipcodes" are stored in a file so Giraffe doesn't rebuild them later
+# Minimizer Index with Zipcodes (-z)
+# -d links the distance index; -z creates the zipcode file to avoid re-indexing during mapping
 vg minimizer -t 16 -d chr22.dist -o chr22.min -z chr22.zip chr22.gbz
+```
 
-# Test map reads using Giraffe (Mapping to Node Space)
-# Note: --named-coordinates is REMOVED to prevent the translation error
+---
+
+### **Part 2: Conversion & Verification (For Nextflow logic)**
+
+These steps ensure that `odgi` can actually see the paths. **Crucial:** Modern `vg` exports GFA 1.1 (W-lines) by default, which some `odgi` versions ignore. We force P-lines.
+
+```bash
+# Convert GBZ back to GFA forcing P-lines (Paths) instead of W-lines (Walks)
+# Flag -f = GFA output; -W = no-wline (forces P-lines)
+vg convert chr22.gbz -f -W > chr22_fixed_paths.gfa
+
+# VERIFICATION 1: Ensure CHM13 is written as a Path (P) line
+grep "^P" chr22_fixed_paths.gfa | grep "CHM13"
+
+# VERIFICATION 2: Check GBZ internal metadata
+vg paths -x chr22.gbz -L | grep "CHM13"
+
+# 3. Manual Build & Viz Test
+# Build the .og (odgi handles P-lines reliably)
+odgi build -g chr22_fixed_paths.gfa -o manual_test.og -t 4
+
+# Check the .og path list
+odgi paths -i manual_test.og -L | grep "CHM13"
+
+# Generate PNG using the reference path as the coordinate backbone
+# -r defines the reference; -P ensures the layout is path-guided
+odgi viz -i manual_test.og -o test_viz.png -r "CHM13#0#chr22:0-*" -s '#' -P
+```
+
+---
+
+### **Part 3: Mapping & Surjection (Per-Sample Operations)**
+
+```bash
+# Map reads using Giraffe (Outputting to Graph Space/GAM)
+# We avoid --named-coordinates to ensure internal node IDs are used correctly
 vg giraffe -t 10 \
-    -Z /data/scratch/temp/chr22.gbz \
-    -d /data/scratch/temp/chr22.dist \
-    -m /data/scratch/temp/chr22.min \
+    -Z chr22.gbz \
+    -d chr22.dist \
+    -m chr22.min \
     --zipcode-name chr22.zip \
-    -f /data/data/HG001_chr22_extracted.fastq.gz \
+    -f sample_reads.fastq.gz \
     --output-format gam > test_map.gam
 
-# Surject GAM to BAM (Mapping to Reference Space)
-# --into-ref MUST match the path name found in Step 2
+# Surject GAM to BAM (Projecting Graph alignments to Linear Reference)
+# --into-ref MUST match the exact string found in Verification Step 2
 vg surject -t 4 \
     -x chr22.gbz \
     -b \
