@@ -54,6 +54,7 @@ include { VG_GIRAFFE      } from '../../modules/local/vg/main'
 include { VG_SURJECT       } from '../../modules/local/vg/main'
 include { VG_CALL          } from '../../modules/local/vg/main'
 include { VG_STATS         } from '../../modules/local/vg/main'
+include { VG_AUGMENT       } from '../../modules/local/vg/main'
 include { ODGI_BUILD       } from '../../modules/local/odgi/main'
 include { ODGI_VIZ         } from '../../modules/local/odgi/main'
 include { SAMTOOLS_SORT    } from '../../modules/local/samtools/main'
@@ -142,6 +143,16 @@ workflow PANGENOME {
     )
     ch_versions = ch_versions.mix(VG_CALL.out.versions)
 
+    // ── vg augment: embed sample alignments into the graph ──────────────────
+    // This turns your mapping (GAM) into actual paths in a new VG file.
+    // This is the step that makes HG002 visible in odgi viz.
+    VG_AUGMENT (
+        ch_gam,
+        ch_gbz
+    )
+
+    ch_augmented_vg = VG_AUGMENT.out.vg
+    ch_versions     = ch_versions.mix(VG_AUGMENT.out.versions)
     // ── odgi viz: 1D pangenome graph visualisation ────────────────────────────
     // Requires ODGI format graph built from GBZ.
     // odgi viz produces a PNG strip showing node coverage depth across the graph.
@@ -150,13 +161,9 @@ workflow PANGENOME {
     // Note: odgi viz on the full genome graph is very large. We restrict to
     // Chr22 in the test profile, or a user-specified region via params.odgi_region.
     // Region format: PATH:start-end (e.g., "chr22:0-51324926")
-    //
-    // TODO: Enable alignment overlay (VG issue #4240)
-    // To re-enable: (1) Add GAM to ODGI_BUILD input, (2) Uncomment vg augment step
-    // in odgi/build/main.nf, (3) Add -A ${prefix} -S flags to odgi viz command
     if (params.odgi_region) {
         ODGI_BUILD(
-            ch_gam.map { meta, _gam -> [meta, ch_gbz] }
+            ch_augmented_vg
         )
         ch_versions = ch_versions.mix(ODGI_BUILD.out.versions)
 
@@ -164,7 +171,7 @@ workflow PANGENOME {
             ODGI_BUILD.out.odgi,
             params.odgi_region
         )
-        ch_reports  = ch_reports.mix(ODGI_VIZ.out.png.map { it[1] })
+        ch_reports  = ch_reports.mix(ODGI_VIZ.out.png.map { it -> it[1] })
         ch_versions = ch_versions.mix(ODGI_VIZ.out.versions)
     }
 
