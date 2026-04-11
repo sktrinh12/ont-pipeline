@@ -1,6 +1,8 @@
 # ONT-WGS & Methylation Pipeline v1.0.0
 
-A production-ready **Nextflow DSL2** pipeline for Oxford Nanopore (ONT) long-read Whole Genome Sequencing — from raw pod5 signal to structural variants, 5mC/5hmC methylation profiles, phased haplotypes, and pangenome graph projection.
+A production-ready **Nextflow DSL2** pipeline for Oxford Nanopore (ONT) long-read Whole Genome Sequencing — from raw pod5 signal to structural variants, 5mC/5hmC methylation profiles, phased haplotypes, and pangenome graph projection. Dataset is the Ashkenazim jewish family trio (HG002-HG004).
+
+Refer to [concepts](./concepts.md) for details on the biology and tool use of the pipeline.
 
 ---
 
@@ -130,26 +132,6 @@ OUTPUT TREE:
   ├── multiqc/            ← Aggregated HTML QC report
   └── pipeline_info/      ← Timeline, trace, DAG
 ```
-
----
-
-## What Changed from v1 (Key Corrections)
-
-| Area | v1 (original notes) | v2 (corrected) | Rationale |
-|---|---|---|---|
-| **Primary format** | fast5 / pod5 | **pod5 preferred** | ONT deprecated fast5; all R10.4.1 instruments produce pod5 natively |
-| **Read filtering** | NanoFilt | **Chopper** | NanoFilt is unmaintained; Chopper is the author's recommended successor (Rust, multi-threaded) |
-| **minimap2 preset** | `map-ont` | **`lr:hq`** | `lr:hq` (minimap2 ≥2.26) is tuned for R10.4.1 SUP reads (>Q20); `map-ont` was designed for R9.4.1 |
-| **Basecalling output** | FastQ | **uBAM (with MM/ML tags)** | Keeping Dorado output as uBAM preserves methylation tags; converting to FASTQ strips them |
-| **Duplex** | Not mentioned | **Supported (--duplex)** | Dorado duplex is a major feature producing Q50+ reads; critical for high-accuracy calling |
-| **Methylation** | modbam2bed / nanopolish | **modkit** | modkit is ONT's current tool; supports 5mC + 5hmC simultaneously; modbam2bed is deprecated |
-| **Phasing** | Not included | **longphase** | longphase is 5–10× faster than WhatsHap for ONT and jointly phases SVs + SNPs |
-| **Haplotagging** | Not included | **longphase haplotag → HP-tagged BAM** | Required for per-haplotype methylation (ASM analysis) |
-| **Sniffles2 TRF** | Optional note | **Strongly enforced, CHM13-specific BED** | Without TRF BED, Sniffles2 over-calls thousands of false SVs in satellite regions |
-| **Sniffles2 cohort** | Not mentioned | **.snf output for joint genotyping** | Per-sample SV merging (SURVIVOR) is inferior; .snf joint calling is the current standard |
-| **Pangenome graph** | HPRC (unversioned) | **HPRC v1.1 GBZ** | v1.1 is the current stable release (94 haplotypes, CHM13 + GRCh38 paths) |
-| **Variant calling reference** | GRCh38 implied | **T2T-CHM13v2.0 (hs1)** | CHM13 is the primary reference for the HPRC v1.1 graph; GRCh38 path also available |
-| **CpG island annotation** | Generic mention | **CHM13-specific BED required** | GRCh38 CpG island coordinates cannot be used with CHM13 without liftover |
 
 ---
 
@@ -358,8 +340,6 @@ WhatsHap is the gold standard for short-read phasing and is well-integrated with
 - Comparable or better N50 phase block lengths
 - Native haplotagging support
 
-Use WhatsHap if you need strict GATK/Picard compatibility or if integrating with an existing short-read phasing pipeline.
-
 ---
 
 ## Multi-Sample / Cohort Mode
@@ -381,19 +361,6 @@ glnexus_cli \
 ```
 
 ---
-
-## Known Limitations
-
-### Pangenome Visualization (odgi viz)
-
-**Current behavior**: Visualizes pangenome graph structure only (no alignment overlay).
-
-**To enable alignment overlay** (experimental):
-1. Monitor [VG issue #4240](https://github.com/vgteam/vg/issues/4240) for resolution
-2. Set `odgi_include_alignments = true` (add to config)
-3. The pipeline will inject GAM reads into graph via `vg augment` before ODGI build
-4. odgi viz will use `-A` prefix and `-S` flags to show strand colors for aligned reads
-
 
 > This pipeline is validated on a Chr22 subset of the HG002 HPRC dataset (GIAB benchmark sample) using the following:
 > - ~15× coverage of Chr22 (ONT R10.4.1 SUP)
