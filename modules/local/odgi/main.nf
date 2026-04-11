@@ -56,24 +56,9 @@ process ODGI_VIZ {
 ============================================================================================
     MODULE: ODGI_BUILD
     Tool   : vg (>=1.73), odgi (>=0.9.0)
-    Purpose: Convert GBZ pangenome graph to ODGI format for visualization.
-    Direct conversion from GBZ to ODGI
-============================================================================================
- TODO: Enable alignment overlay
-       1. Add GAM to input tuple: tuple val(meta), path(gbz), path(gam)
-       2. Add vg augment + vg convert steps below
-       3. Update pangenome.nf to pass GAM to ODGI_BUILD
-
-       - Issue of Computational Scale.
-       - If "augment" a graph with several gigabytes of FASTQ data, .odgi file will become massive. Instead of having ~50 paths (the HPRC references), it will have millions of paths (one for every read).
-
-       - Don't use odgi viz -A for the whole trio across all of Chr22. It will likely crash nodes or produce a PNG that is 100,000 pixels tall.
-
-       - First, run current odgi_region = 'CHM13#chr22:0-*' to see the base graph.
-       - Then, if find a specific region (like a 10kb window where you suspect a structural variant), use a smaller odgi_region and then try the vg augment path.
-       - Need to add: Augment (The missing link)
-         // This turns the .gam alignments into new paths in the graph
-         VG_AUGMENT(VG_GIRAFFE.out.gam, ch_gbz)
+    This grep finds any Path (P) line that ends in a '*' (empty node list) 
+    and deletes it so ODGI doesn't crash.
+    Build the odgi graph
 ============================================================================================
 */
 
@@ -85,7 +70,7 @@ process ODGI_BUILD {
     container   'sktrinh12/vg-odgi:latest'
 
     input:
-    tuple val(meta), path(gbz)
+    tuple val(meta), path(augmented_vg)
 
     output:
     tuple val(meta), path("${meta.id}.og"), emit: odgi
@@ -94,7 +79,9 @@ process ODGI_BUILD {
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"
     """
-    vg convert -g ${gbz} -o > ${prefix}.og
+    vg convert ${augmented_vg} -f -W > ${prefix}.gfa
+    grep -vP "P\\t.*\\t\\*" ${prefix}.gfa > ${prefix}.clean.gfa
+    odgi build -g ${prefix}.gfa -o ${prefix}.og -t ${task.cpus}
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":
