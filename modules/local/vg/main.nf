@@ -251,3 +251,41 @@ process VG_STATS {
     END_VERSIONS
     """
 }
+
+
+/*
+========================================================================================
+    -i: adds the alignment as a path to the graph
+    -S: preserves softclips (important for visualization)
+    1. Convert the read-only GBZ to a Mutable PackedGraph (.pg)
+    2. Augment the mutable graph with sample's alignments
+    Use the .pg as the base now
+    Clean up the large temp file
+========================================================================================
+*/
+process VG_AUGMENT {
+    tag      "$meta.id"
+    label    'process_low'
+    container 'sktrinh12/vg-odgi:latest'
+
+    input:
+    tuple val(meta), path(gam)
+    path  gbz
+
+    output:
+    tuple val(meta), path("${meta.id}_augmented.vg"), emit: vg
+    path  "versions.yml",                            emit: versions
+
+    script:
+    def prefix = task.ext.prefix ?: "${meta.id}"
+    """
+    vg convert ${gbz} -p > temp_mutable.pg
+    vg augment temp_mutable.pg ${gam} > ${prefix}_augmented.vg
+    rm temp_mutable.pg
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        vg: \$(vg version 2>&1 | head -1 | awk '{print \$2}')
+    END_VERSIONS
+    """
+}
