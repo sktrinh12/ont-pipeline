@@ -1,4 +1,4 @@
-# AGENTS.md — ONT-WGS & Methylation Pipeline
+# AGENTS.md — ONT-WGS Pipeline
 
 ## Overview
 
@@ -9,7 +9,7 @@ Nextflow DSL2 pipeline for Oxford Nanopore long-read WGS: basecalling, alignment
 ### Running the Pipeline
 
 ```bash
-# Test profile (Chr22 HG002 subset, no GPU)
+# Test profile (Chr22 HG00X subset, no GPU)
 nextflow run main.nf -profile test,docker -resume
 ```
 
@@ -60,6 +60,8 @@ nextflow run main.nf -with-trace trace.txt
 # Dry run (no execution)
 nextflow run main.nf -dryrun
 ```
+
+Never delete a file without asking permission; always prompt before deleting.
 
 ---
 
