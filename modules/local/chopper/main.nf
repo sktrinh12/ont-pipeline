@@ -25,7 +25,6 @@
 process CHOPPER_FILTER {
     tag         "$meta.id"
     label       'process_low'
-    publishDir  "${params.outdir}/filtered_reads/${meta.id}", mode: 'copy'
 
     container   'olistr12/chopper:0.7.0'
 

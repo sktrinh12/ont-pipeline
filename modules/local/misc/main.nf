@@ -227,8 +227,6 @@ process CUSTOM_DUMPSOFTWAREVERSIONS {
 process DORADO_BASECALLER {
     tag         "$meta.id"
     label       'process_gpu'
-    publishDir  "${params.outdir}/basecalling/${meta.id}", mode: 'copy',
-                saveAs: { fn -> fn.endsWith('.ubam') ? fn : null }
 
     container   'community.wave.seqera.io/library/dorado:latest'
 
@@ -284,8 +282,6 @@ process DORADO_BASECALLER {
 process DORADO_DUPLEX {
     tag         "$meta.id"
     label       'process_gpu'
-    publishDir  "${params.outdir}/basecalling/${meta.id}", mode: 'copy',
-                saveAs: { fn -> fn.endsWith('.ubam') ? fn : null }
 
     container   'community.wave.seqera.io/library/dorado:latest'
 
@@ -339,8 +335,6 @@ process DORADO_DUPLEX {
 process DORADO_MERGE {
     tag         "$meta.id"
     label       'process_low'
-    publishDir  "${params.outdir}/basecalling/${meta.id}", mode: 'copy',
-                saveAs: { fn -> fn.endsWith('.ubam') ? fn : null }
 
     container   'community.wave.seqera.io/library/dorado:latest'
 
@@ -391,8 +385,6 @@ process DORADO_MERGE {
 process MINIMAP2_ALIGN {
     tag         "$meta.id"
     label       'process_low'
-    publishDir  "${params.outdir}/alignment/${meta.id}", mode: 'copy',
-                saveAs: { fn -> fn.endsWith('.bam') ? fn : null }
 
     container   'sktrinh12/minimap2:latest'
 
@@ -444,7 +436,6 @@ process MINIMAP2_ALIGN {
 process SEQKIT_VALIDATE {
     tag         "$meta.id"
     label       'process_low'
-    publishDir  "${params.outdir}/validated_reads/${meta.id}", mode: 'copy'
 
     container   'sktrinh12/seqkit:latest'
 

@@ -28,7 +28,6 @@
 process LONGPHASE_PHASE {
     tag         "$meta.id"
     label       'process_low'
-    publishDir  "${params.outdir}/phasing/${meta.id}", mode: 'copy'
 
     container   'sktrinh12/longphase:latest'
 
