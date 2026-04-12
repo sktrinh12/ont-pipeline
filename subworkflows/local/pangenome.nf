@@ -1,5 +1,5 @@
 /*
-========================================================================================
+=======================================================================================
     SUBWORKFLOW: PANGENOME
     Purpose : Map reads to the HPRC v1.1 pangenome variation graph using vg giraffe,
               call variants directly on the graph, and visualise graph topology.
@@ -23,42 +23,53 @@
            Recommended for all production pangenome mapping.
          - giraffe requires three pre-built index files from the GBZ graph:
              .gbz  — GBZ-format graph (sequence + topology + haplotypes)
-             .min  — minimizer index (k-mer seeds)
-             .dist — distance index (for optimal alignment scoring)
-           These are available for HPRC v1.1 from the HPRC S3 bucket:
-             s3://human-pangenomics/pangenomes/freeze/freeze1/graph/
+             .min  — LR minimizer index (from vg autoindex --workflow lr-giraffe)
+             .dist — LR distance index (from vg autoindex)
+             .zipcodes — LR zipcode index (from vg autoindex)
 
-    3. Graph-based variant calling:
-         - vg call operates directly on the graph paths to produce a VCF against
-           a chosen reference path (hs1 = CHM13v2.0 in the HPRC graph).
-         - These VCFs capture pangenome-specific variants — alleles that are absent
-           from the CHM13 linear reference but present in the HPRC graph.
-         - Complement rather than replace Clair3/Sniffles2 results.
+    3. Read renaming (Part 3 of visualization workflow):
+         - Zero-pad read names so lexicographic sort matches numeric sort
+         - Format: @SAMPLENAME_BARCODE.000001
+         - Critical for proper ordering in odgi visualizations
 
-    4. odgi visualisation:
-         - odgi viz generates a 1D linearized heat map of the graph showing path
-           coverage, useful for QC and publication figures.
-         - Output is a PNG/GIF, not a publication-quality figure, but it confirms
-           that mapping succeeded and coverage is uniform.
+    4. Filtering (Part 5 of visualization workflow):
+         - vg filter -q 1 removes MAPQ=0 (unmapped) reads
+         - Unmapped reads produce empty paths that crash odgi build
 
-    5. Chromosome-level parallelism:
+    5. Augmentation (Part 6 of visualization workflow):
+         - vg augment --label-paths adds read names as graph paths
+         - Essential for sample reads to appear in odgi viz
+
+    6. odgi visualisation (Part 9 of visualization workflow):
+         - heatmap: compressed coverage across all paths
+         - depth: per-read depth coloring (black→blue)
+         - clustered: Jaccard-similarity ordering
+
+    7. Chromosome-level parallelism:
          - vg giraffe is memory-intensive (~300 GB RAM for the full HPRC v1.1 graph).
          - For HPC runs with limited RAM, use the per-chromosome subgraph strategy:
            extract chr-specific subgraphs with `vg chunk` and map in parallel.
          - The pipeline defaults to full-graph mapping but supports chunked mode
            via params.vg_chunk_mode.
-========================================================================================
+=======================================================================================
 */
 
-include { VG_GIRAFFE      } from '../../modules/local/vg/main'
-include { VG_SURJECT       } from '../../modules/local/vg/main'
-include { VG_CALL          } from '../../modules/local/vg/main'
-include { VG_STATS         } from '../../modules/local/vg/main'
-include { VG_AUGMENT       } from '../../modules/local/vg/main'
-include { ODGI_BUILD       } from '../../modules/local/odgi/main'
-include { ODGI_VIZ         } from '../../modules/local/odgi/main'
-include { SAMTOOLS_SORT    } from '../../modules/local/samtools/main'
-include { SAMTOOLS_INDEX   } from '../../modules/local/samtools/main'
+include { READ_RENAME        } from '../../modules/local/vg/main'
+include { VG_GIRAFFE         } from '../../modules/local/vg/main'
+include { VG_FILTER_MAPQ     } from '../../modules/local/vg/main'
+include { VG_SURJECT         } from '../../modules/local/vg/main'
+include { VG_CALL            } from '../../modules/local/vg/main'
+include { VG_STATS           } from '../../modules/local/vg/main'
+include { VG_AUGMENT         } from '../../modules/local/vg/main'
+include { VG_COMBINE         } from '../../modules/local/vg/main'
+include { ADD_SAMPLE_PATHS   } from '../../modules/local/vg/main'
+include { ODGI_BUILD         } from '../../modules/local/odgi/main'
+include { ODGI_PATHS_FILTER  } from '../../modules/local/odgi/main'
+include { ODGI_VIZ_HEATMAP   } from '../../modules/local/odgi/main'
+include { ODGI_VIZ_DEPTH     } from '../../modules/local/odgi/main'
+include { ODGI_VIZ_CLUSTERED } from '../../modules/local/odgi/main'
+include { SAMTOOLS_SORT      } from '../../modules/local/samtools/main'
+include { SAMTOOLS_INDEX     } from '../../modules/local/samtools/main'
 
 workflow PANGENOME {
 
@@ -70,35 +81,49 @@ workflow PANGENOME {
     ch_versions = Channel.empty()
     ch_reports  = Channel.empty()
 
-    // Validate index files - use separate params if provided, otherwise derive from gbz
-    ch_min  = params.pangenome_min_index ? file(params.pangenome_min_index) : file("${ch_gbz}.min")
-    ch_dist = params.pangenome_dist ? file(params.pangenome_dist) : file("${ch_gbz}.dist")
-    ch_zip  = params.pangenome_zipcode ? file(params.pangenome_zipcode) : null
+    // Validate LR index files - use pangenome_prefix to derive paths
+    def prefix = params.pangenome_prefix ?: 'chr22_lr'
+    ch_min  = params.pangenome_min_index ? file(params.pangenome_min_index) : file("${prefix}.longread.withzip.min")
+    ch_dist = params.pangenome_dist ? file(params.pangenome_dist) : file("${prefix}.dist")
+    ch_zip  = params.pangenome_zipcode ? file(params.pangenome_zipcode) : file("${prefix}.longread.zipcodes")
+    
     if (!ch_min.exists()) {
-        log.error "[PANGENOME] Minimizer index not found: ${ch_min}. " +
-                  "Run: vg minimizer -p -o graph.min graph.gbz"
+        log.error "[PANGENOME] LR minimizer index not found: ${ch_min}. " +
+                  "Run: vg autoindex --workflow lr-giraffe --prefix ${prefix} --gbz ${ch_gbz}"
         System.exit(1)
     }
     if (!ch_dist.exists()) {
-        log.error "[PANGENOME] Distance index not found: ${ch_dist}. " +
-                  "Run: vg index -j graph.dist graph.gbz"
+        log.error "[PANGENOME] LR distance index not found: ${ch_dist}. " +
+                  "Run: vg autoindex --workflow lr-giraffe --prefix ${prefix} --gbz ${ch_gbz}"
         System.exit(1)
     }
+    if (!ch_zip.exists()) {
+        log.warn "[PANGENOME] LR zipcode index not found: ${ch_zip}. Proceeding without zipcodes."
+        ch_zip = null
+    }
 
-    // ── vg giraffe: map to pangenome graph ────────────────────────────────────
+    // ── Part 3: Read renaming ─────────────────────────────────────────────────────
+    // Zero-pad read names so lexicographic sort matches numeric sort
+    // Format: @SAMPLEID_BARCODE.000001
+    READ_RENAME( ch_reads )
+    ch_renamed_reads = READ_RENAME.out.fastq
+    ch_versions = ch_versions.mix(READ_RENAME.out.versions)
+
+    // ── Part 4: vg giraffe: map to pangenome graph ────────────────────────────────
     // Outputs: GAF (Graph Alignment Format) or GAM (Graph Alignment/Map binary)
     // We use GAM for downstream vg call; GAF is human-readable for debugging.
     //
     // Key flags:
+    //   -b r10   : ONT R10.4.1 (use -b hifi for PacBio HiFi)
     //   -Z  : GBZ graph input
-    //   -m  : minimizer index
-    //   -d  : distance index
-    //   -x  : also output as BAM via surjection (--output-format BAM)
+    //   -m  : LR minimizer index
+    //   -d  : LR distance index
+    //   -z  : LR zipcode index
     //   -f  : input FASTQ
     //   -t  : threads
-    //   --zipcode-name: use zipcode index for named-coordinate reporting
+    //   -p  : progressive output
     VG_GIRAFFE (
-        ch_reads,
+        ch_renamed_reads,
         ch_gbz,
         ch_min,
         ch_dist,
@@ -108,13 +133,19 @@ workflow PANGENOME {
     ch_gam      = VG_GIRAFFE.out.gam
     ch_versions = ch_versions.mix(VG_GIRAFFE.out.versions)
 
-    // ── vg stats: mapping quality report ─────────────────────────────────────
+    // ── Part 5: vg filter - Remove unmapped reads (MAPQ=0) ────────────────────────
+    // Unmapped reads produce empty paths that crash odgi build
+    VG_FILTER_MAPQ( ch_gam )
+    ch_filtered_gam = VG_FILTER_MAPQ.out.gam
+    ch_versions     = ch_versions.mix(VG_FILTER_MAPQ.out.versions)
+
+    // ── vg stats: mapping quality report ─────────────────────────────────────────
     // Reports: total reads, mapped %, perfect mappings, mapping quality distribution
-    VG_STATS ( ch_gam )
+    VG_STATS ( ch_filtered_gam )
     ch_reports  = ch_reports.mix(VG_STATS.out.stats.map { it[1] })
     ch_versions = ch_versions.mix(VG_STATS.out.versions)
 
-    // ── vg surject: project graph alignments → linear BAM ────────────────────
+    // ── vg surject: project graph alignments → linear BAM ────────────────────────
     // Surjection maps each graph alignment back to the closest reference path
     // (CHM13 = CHM13v2.0). This produces a standard BAM against the linear reference,
     // enabling comparison with minimap2 alignments and use with linear-reference tools.
@@ -123,7 +154,7 @@ workflow PANGENOME {
     //   - minimap2 BAM: better for regions well-represented in CHM13
     //   - surjected BAM: better for regions with high haplotype diversity
     VG_SURJECT (
-        ch_gam,
+        ch_filtered_gam,
         ch_gbz,
         params.vg_threads
     )
@@ -133,46 +164,94 @@ workflow PANGENOME {
     SAMTOOLS_SORT  ( ch_surject_bam )
     SAMTOOLS_INDEX ( SAMTOOLS_SORT.out.bam )
 
-    // ── vg call: variant calling on the graph ─────────────────────────────────
+    // ── vg call: variant calling on the graph ──────────────────────────────────────
     // Detects variants that are encoded as alternate paths in the pangenome graph.
     // These include population-specific alleles absent from the CHM13 linear ref.
     VG_CALL (
-        ch_gam,
+        ch_filtered_gam,
         ch_gbz,
         'CHM13'
     )
     ch_versions = ch_versions.mix(VG_CALL.out.versions)
 
-    // ── vg augment: embed sample alignments into the graph ──────────────────
-    // This turns your mapping (GAM) into actual paths in a new VG file.
-    // This is the step that makes HG002 visible in odgi viz.
-    VG_AUGMENT (
-        ch_gam,
-        ch_gbz
-    )
-
-    ch_augmented_vg = VG_AUGMENT.out.vg
-    ch_versions     = ch_versions.mix(VG_AUGMENT.out.versions)
-    // ── odgi viz: 1D pangenome graph visualisation ────────────────────────────
-    // Requires ODGI format graph built from GBZ.
-    // odgi viz produces a PNG strip showing node coverage depth across the graph.
-    // This is used to confirm mapping uniformity and identify under-mapped regions.
+    // ── Part 6-9: vg augment + odgi viz: consolidated family visualization ───────
+    // Instead of per-sample processing, we:
+    // 1. Augment each sample individually to get VGs with sample paths (--label-paths)
+    // 2. Combine all augmented VGs into one graph with VG_COMBINE
+    // 3. Build one ODGI from the combined graph
+    // 4. Generate 3 visualizations: heatmap, depth, clustered
     //
-    // Note: odgi viz on the full genome graph is very large. We restrict to
-    // Chr22 in the test profile, or a user-specified region via params.odgi_region.
-    // Region format: PATH:start-end (e.g., "chr22:0-51324926")
+    // This produces consolidated PNGs instead of one per sample.
     if (params.odgi_region) {
-        ODGI_BUILD(
-            ch_augmented_vg
+        // Augment each sample individually (with --label-paths to preserve read paths)
+        VG_AUGMENT(
+            ch_filtered_gam,
+            ch_gbz
         )
+        ch_single_augmented = VG_AUGMENT.out.vg
+        ch_versions         = ch_versions.mix(VG_AUGMENT.out.versions)
+
+        // Collect all augmented VGs into a single combined graph
+        // Group all augmented VGs together and create family meta
+        ch_augmented_list = ch_single_augmented
+            .map { [ [id: 'family', family_id: it[0].family_id], it[1] ] }
+            .collect()
+
+        // Combine all augmented VGs into one
+        VG_COMBINE(
+            ch_augmented_list
+        )
+        ch_combined_vg = VG_COMBINE.out.vg
+        ch_versions    = ch_versions.mix(VG_COMBINE.out.versions)
+
+        // Extract sample IDs from the input reads channel
+        // Format: sampleid_barcode for matching renamed reads
+        ch_sample_ids = ch_reads.map { "${it[0].id}_${it[0].barcode}" }.collect()
+
+        // Build ODGI from combined graph (sample read paths already added via --label-paths in VG_AUGMENT)
+        ODGI_BUILD(
+            ch_combined_vg
+        )
+        ch_odgi = ODGI_BUILD.out.odgi
         ch_versions = ch_versions.mix(ODGI_BUILD.out.versions)
 
-        ODGI_VIZ(
-            ODGI_BUILD.out.odgi,
+        // ── Part 8: Prepare display path list ─────────────────────────────────────
+        // Restrict visualizations to CHM13 reference + sample reads
+        ODGI_PATHS_FILTER(
+            ch_odgi,
+            ch_sample_ids
+        )
+        ch_path_list = ODGI_PATHS_FILTER.out.path_list
+        ch_versions  = ch_versions.mix(ODGI_PATHS_FILTER.out.versions)
+
+        // ── Part 9: Generate visualizations ────────────────────────────────────────
+        
+        // 9a: Compressed Coverage Heatmap
+        ODGI_VIZ_HEATMAP(
+            ch_odgi,
+            params.odgi_region,
+            params.odgi_ignore_prefix
+        )
+        ch_reports  = ch_reports.mix(ODGI_VIZ_HEATMAP.out.heatmap_png)
+        ch_versions = ch_versions.mix(ODGI_VIZ_HEATMAP.out.versions)
+
+        // 9b: Per-Read Depth Coloring
+        ODGI_VIZ_DEPTH(
+            ch_odgi,
+            ch_path_list,
             params.odgi_region
         )
-        ch_reports  = ch_reports.mix(ODGI_VIZ.out.png.map { it -> it[1] })
-        ch_versions = ch_versions.mix(ODGI_VIZ.out.versions)
+        ch_reports  = ch_reports.mix(ODGI_VIZ_DEPTH.out.depth_png)
+        ch_versions = ch_versions.mix(ODGI_VIZ_DEPTH.out.versions)
+
+        // 9c: Clustered View (Jaccard similarity ordering)
+        ODGI_VIZ_CLUSTERED(
+            ch_odgi,
+            params.odgi_region,
+            params.odgi_ignore_prefix
+        )
+        ch_reports  = ch_reports.mix(ODGI_VIZ_CLUSTERED.out.clustered_png)
+        ch_versions = ch_versions.mix(ODGI_VIZ_CLUSTERED.out.versions)
     }
 
     emit:
