@@ -124,18 +124,30 @@ process ODGI_RETAIN {
     input:
     tuple val(meta), path(full_odgi)
     path(path_list)
+    val(region)
 
     output:
     tuple val(meta), path("${meta.id}.retained.og"), emit: retained_odgi
+    path "display_paths_retained.txt",               emit: path_list
     path "versions.yml",                             emit: versions
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"
+    // Extract the reference path name from region (e.g. "CHM13#0#chr22" from "CHM13#0#chr22:0-*")
+    def ref_path = region ? region.split(':')[0] : ""
+    def region_arg = region ? "-r ${region}" : ""
     """
     odgi extract \\
         -i ${full_odgi} \\
+        ${region_arg} \\
         -p ${path_list} \\
-        -o ${prefix}.retained.og
+        -O \\
+        -o ${prefix}.retained.og \\
+        -P
+
+    # Regenerate display path list from extracted graph
+    # (path names gain coordinate suffixes after extraction)
+    odgi paths -i ${prefix}.retained.og -L > display_paths_retained.txt
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":
@@ -145,7 +157,7 @@ process ODGI_RETAIN {
 
     stub:
     """
-    touch ${meta.id}.retained.og
+    touch ${meta.id}.retained.og display_paths_retained.txt
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":
         odgi: "stub"
@@ -184,10 +196,11 @@ process ODGI_SORT {
         -o ${prefix}.sorted.og \\
         -t ${task.cpus} \\
         -P \\
-        -Y \\
+        -p sY \\
         -O
-
+    
     cat <<-END_VERSIONS > versions.yml
+
     "${task.process}":
         odgi: \$(odgi version 2>&1 | head -1 | awk '{print \$2}')
     END_VERSIONS
@@ -220,18 +233,18 @@ process ODGI_LAYOUT {
     container   'sktrinh12/vg-odgi:latest'
 
     input:
-    tuple val(meta), path(sorted_odgi)
+    tuple val(meta), path(retained_odgi)
 
     output:
-    tuple val(meta), path("${meta.id}.sorted.og.lay"), emit: layout
+    tuple val(meta), path("${meta.id}.retained.og.lay"), emit: layout
     path "versions.yml",                               emit: versions
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"
     """
     odgi layout \\
-        -i ${sorted_odgi} \\
-        -o ${prefix}.sorted.og.lay \\
+        -i ${retained_odgi} \\
+        -o ${prefix}.retained.og.lay \\
         -t ${task.cpus} \\
         -P
 
@@ -243,7 +256,7 @@ process ODGI_LAYOUT {
 
     stub:
     """
-    touch ${meta.id}.sorted.og.lay
+    touch ${meta.id}.retained.og.lay
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":
         odgi: "stub"
@@ -269,7 +282,7 @@ process ODGI_DRAW {
     container   'sktrinh12/vg-odgi:latest'
 
     input:
-    tuple val(meta), path(sorted_odgi)
+    tuple val(meta), path(retained_odgi)
     tuple val(meta2), path(layout)
     val(region)
 
@@ -282,11 +295,13 @@ process ODGI_DRAW {
     def region_arg  = region && region != 'null' ? "-r ${region}" : ""
     """
     odgi draw \\
-        -i ${sorted_odgi} \\
+        -i ${retained_odgi} \\
         -c ${layout} \\
         -p ${prefix}.topology.png \\
         -C \\
         -H 1000 \\
+        -w 1 \\
+        -S 2 \\
         -t ${task.cpus}
 
     cat <<-END_VERSIONS > versions.yml
@@ -307,16 +322,60 @@ process ODGI_DRAW {
 
 
 /*
-==========================================================================================
+========================================================================================
+    MODULE: ODGI_COMPACT_IDS
+    Tool   : odgi (>=0.9.0)
+    Purpose: Aggressively compact node IDs to prevent assertion failures in visualization.
+             Multiple optimization passes ensure small, contiguous node identifiers.
+========================================================================================
+*/
+
+process ODGI_COMPACT_IDS {
+    tag         '$meta.id'
+    label       'process_low'
+
+    container   'sktrinh12/vg-odgi:latest'
+
+    input:
+    tuple val(meta), path(odgi)
+
+    output:
+    tuple val(meta), path("${meta.id}.compacted.og"), emit: compacted_odgi
+    path "versions.yml",                         emit: versions
+
+    script:
+    def prefix = task.ext.prefix ?: "${meta.id}"
+    """
+    odgi sort -i ${odgi} -o ${prefix}.compacted.og -p sY -O
+    
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        odgi: \$(odgi version 2>&1 | head -1 | awk '{print \$2}')
+    END_VERSIONS
+    """
+
+    stub:
+    """
+    touch ${meta.id}.compacted.og
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        odgi: "stub"
+    END_VERSIONS
+    """
+}
+
+
+/*
+========================================================================================
     MODULE: ODGI_VIZ_SAMPLE_COVERAGE
     Tool   : odgi (>=0.9.0)
     Purpose: Visualize pangenome graph - Sample-level coverage heatmap.
              Collapses all reads from each sample into a single row using prefix merges.
              Shows which genomic regions are covered by each sample.
     Flags  : -M = prefix merge file (collapses paths with matching prefixes)
-             -O = compressed mode (heatmap coloring)
-             -P = pixel-based rendering
-==========================================================================================
+              -O = compressed mode (heatmap coloring)
+              -P = pixel-based rendering
+========================================================================================
 */
 
 process ODGI_VIZ_SAMPLE_COVERAGE {
@@ -330,23 +389,17 @@ process ODGI_VIZ_SAMPLE_COVERAGE {
     tuple val(meta), path(odgi)
     path(path_list)
     path(merge_prefixes)
-    val(region)
-    val(ignore_prefix)
 
     output:
     path "${meta.id}.sample_coverage.png", emit: sample_coverage_png
     path "versions.yml",                   emit: versions
 
     script:
-    def prefix       = task.ext.prefix ?: meta.id
-    def region_arg   = region && region != 'null' ? "-r ${region}" : ""
-    def ignore_arg   = ignore_prefix && ignore_prefix != 'null' ? "-I ${ignore_prefix}" : ""
+    def prefix = task.ext.prefix ?: meta.id
     """
     odgi viz \\
         -i ${odgi} \\
         -o ${prefix}.sample_coverage.png \\
-        ${region_arg} \\
-        ${ignore_arg} \\
         -p ${path_list} \\
         -M ${merge_prefixes} \\
         -P \\
