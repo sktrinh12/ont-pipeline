@@ -1,5 +1,5 @@
 /*
-=======================================================================================
+======================================================================================
     SUBWORKFLOW: PANGENOME
     Purpose : Map reads to the HPRC v1.1 pangenome variation graph using vg giraffe,
               call variants directly on the graph, and visualise graph topology.
@@ -41,9 +41,8 @@
          - Essential for sample reads to appear in odgi viz
 
     6. odgi visualisation (Part 9 of visualization workflow):
-         - heatmap: compressed coverage across all paths
-         - depth: per-read depth coloring (black→blue)
-         - clustered: Jaccard-similarity ordering
+         - sample_coverage: compressed coverage with prefix merges (one row per sample)
+         - topology: 2D graph layout showing variant bubbles and complex regions
 
     7. Chromosome-level parallelism:
          - vg giraffe is memory-intensive (~300 GB RAM for the full HPRC v1.1 graph).
@@ -51,7 +50,7 @@
            extract chr-specific subgraphs with `vg chunk` and map in parallel.
          - The pipeline defaults to full-graph mapping but supports chunked mode
            via params.vg_chunk_mode.
-=======================================================================================
+======================================================================================
 */
 
 include { READ_RENAME        } from '../../modules/local/vg/main'
@@ -62,12 +61,13 @@ include { VG_CALL            } from '../../modules/local/vg/main'
 include { VG_STATS           } from '../../modules/local/vg/main'
 include { VG_AUGMENT         } from '../../modules/local/vg/main'
 include { VG_COMBINE         } from '../../modules/local/vg/main'
-include { ADD_SAMPLE_PATHS   } from '../../modules/local/vg/main'
-include { ODGI_BUILD         } from '../../modules/local/odgi/main'
-include { ODGI_PATHS_FILTER  } from '../../modules/local/odgi/main'
-include { ODGI_VIZ_HEATMAP   } from '../../modules/local/odgi/main'
-include { ODGI_VIZ_DEPTH     } from '../../modules/local/odgi/main'
-include { ODGI_VIZ_CLUSTERED } from '../../modules/local/odgi/main'
+include { ODGI_BUILD              } from '../../modules/local/odgi/main'
+include { ODGI_PATHS_FILTER       } from '../../modules/local/odgi/main'
+include { ODGI_RETAIN             } from '../../modules/local/odgi/main'
+include { ODGI_SORT               } from '../../modules/local/odgi/main'
+include { ODGI_LAYOUT             } from '../../modules/local/odgi/main'
+include { ODGI_DRAW               } from '../../modules/local/odgi/main'
+include { ODGI_VIZ_SAMPLE_COVERAGE } from '../../modules/local/odgi/main'
 include { SAMTOOLS_SORT      } from '../../modules/local/samtools/main'
 include { SAMTOOLS_INDEX     } from '../../modules/local/samtools/main'
 
@@ -179,7 +179,9 @@ workflow PANGENOME {
     // 1. Augment each sample individually to get VGs with sample paths (--label-paths)
     // 2. Combine all augmented VGs into one graph with VG_COMBINE
     // 3. Build one ODGI from the combined graph
-    // 4. Generate 3 visualizations: heatmap, depth, clustered
+    // 4. Generate visualizations:
+    //    a. Sample coverage heatmap (reads collapsed into one row per sample)
+    //    b. 2D graph topology (shows variant bubbles, complex regions)
     //
     // This produces consolidated PNGs instead of one per sample.
     if (params.odgi_region) {
@@ -204,10 +206,6 @@ workflow PANGENOME {
         ch_combined_vg = VG_COMBINE.out.vg
         ch_versions    = ch_versions.mix(VG_COMBINE.out.versions)
 
-        // Extract sample IDs from the input reads channel
-        // Format: sampleid_barcode for matching renamed reads
-        ch_sample_ids = ch_reads.map { "${it[0].id}_${it[0].barcode}" }.collect()
-
         // Build ODGI from combined graph (sample read paths already added via --label-paths in VG_AUGMENT)
         ODGI_BUILD(
             ch_combined_vg
@@ -216,7 +214,10 @@ workflow PANGENOME {
         ch_versions = ch_versions.mix(ODGI_BUILD.out.versions)
 
         // ── Part 8: Prepare display path list ─────────────────────────────────────
-        // Restrict visualizations to CHM13 reference + sample reads
+        // Extract sample IDs from the input reads channel for path matching
+        // Format: sampleid_barcode for matching renamed reads
+        ch_sample_ids = ch_reads.map { "${it[0].id}_${it[0].barcode}" }.collect()
+
         ODGI_PATHS_FILTER(
             ch_odgi,
             ch_sample_ids
@@ -224,34 +225,64 @@ workflow PANGENOME {
         ch_path_list = ODGI_PATHS_FILTER.out.path_list
         ch_versions  = ch_versions.mix(ODGI_PATHS_FILTER.out.versions)
 
+        // Extract only CHM13 + sample read paths to remove 94 HPRC haplotypes
+        // This dramatically speeds up sort/layout and cleans up visualizations
+        ODGI_RETAIN(
+            ch_odgi,
+            ch_path_list
+        )
+        ch_retained_odgi = ODGI_RETAIN.out.retained_odgi
+        ch_versions      = ch_versions.mix(ODGI_RETAIN.out.versions)
+
         // ── Part 9: Generate visualizations ────────────────────────────────────────
         
-        // 9a: Compressed Coverage Heatmap
-        ODGI_VIZ_HEATMAP(
-            ch_odgi,
-            params.odgi_region,
-            params.odgi_ignore_prefix
-        )
-        ch_reports  = ch_reports.mix(ODGI_VIZ_HEATMAP.out.heatmap_png)
-        ch_versions = ch_versions.mix(ODGI_VIZ_HEATMAP.out.versions)
+        // 9a: Sample Coverage Heatmap (one row per sample via prefix merges)
+        // Create merge prefixes file from sample IDs, including the reference
+        ch_merge_prefixes = ch_sample_ids
+            .map { samples ->
+                def prefixes = ['CHM13'] + samples.collect { it + "." }
+                prefixes.unique().sort()
+                prefixes.join('\n') + '\n'
+            }
+            .map { content ->
+                def f = file('merge_prefixes.txt')
+                f.text = content
+                f
+            }
 
-        // 9b: Per-Read Depth Coloring
-        ODGI_VIZ_DEPTH(
+        ODGI_VIZ_SAMPLE_COVERAGE(
             ch_odgi,
             ch_path_list,
+            ch_merge_prefixes,
+            params.odgi_region,
+            'null'
+        )
+        ch_reports  = ch_reports.mix(ODGI_VIZ_SAMPLE_COVERAGE.out.sample_coverage_png)
+        ch_versions = ch_versions.mix(ODGI_VIZ_SAMPLE_COVERAGE.out.versions)
+
+        // 9b: 2D Graph Topology (layout + draw)
+        // Sort graph for clean node ordering
+        ODGI_SORT(
+            ch_retained_odgi
+        )
+        ch_sorted_odgi = ODGI_SORT.out.sorted_odgi
+        ch_versions    = ch_versions.mix(ODGI_SORT.out.versions)
+
+        // Compute 2D layout coordinates
+        ODGI_LAYOUT(
+            ch_sorted_odgi
+        )
+        ch_layout = ODGI_LAYOUT.out.layout
+        ch_versions = ch_versions.mix(ODGI_LAYOUT.out.versions)
+
+        // Render 2D topology visualization
+        ODGI_DRAW(
+            ch_sorted_odgi,
+            ch_layout,
             params.odgi_region
         )
-        ch_reports  = ch_reports.mix(ODGI_VIZ_DEPTH.out.depth_png)
-        ch_versions = ch_versions.mix(ODGI_VIZ_DEPTH.out.versions)
-
-        // 9c: Clustered View (Jaccard similarity ordering)
-        ODGI_VIZ_CLUSTERED(
-            ch_odgi,
-            params.odgi_region,
-            params.odgi_ignore_prefix
-        )
-        ch_reports  = ch_reports.mix(ODGI_VIZ_CLUSTERED.out.clustered_png)
-        ch_versions = ch_versions.mix(ODGI_VIZ_CLUSTERED.out.versions)
+        ch_reports  = ch_reports.mix(ODGI_DRAW.out.topology_png)
+        ch_versions = ch_versions.mix(ODGI_DRAW.out.versions)
     }
 
     emit:
