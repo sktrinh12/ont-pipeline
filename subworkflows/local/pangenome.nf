@@ -1,57 +1,57 @@
 /*
-======================================================================================
-    SUBWORKFLOW: PANGENOME
-    Purpose : Map reads to the HPRC v1.1 pangenome variation graph using vg giraffe,
-              call variants directly on the graph, and visualise graph topology.
-    Tools   : vg giraffe, vg call, vg stats, odgi (viz)
+ ======================================================================================
+     SUBWORKFLOW: PANGENOME
+     Purpose : Map reads to the HPRC v1.1 pangenome variation graph using vg giraffe,
+               call variants directly on the graph, and visualise graph topology.
+     Tools   : vg giraffe, vg call, vg stats, odgi (viz)
 
-    Key design decisions:
-    ─────────────────────────────────────────────────────────────────────────────────
-    1. Why pangenome in addition to linear alignment?
-         - The T2T-CHM13v2.0 linear reference, while complete, represents a single
-           haplotype. Reads from individuals whose haplotypes diverge significantly
-           from CHM13 (e.g., African populations) are forced to align to a foreign
-           sequence, introducing systematic reference bias.
-         - The HPRC v1.1 pangenome graph encodes 94 haplotypes from 47 diverse
-           individuals, covering ~10% additional genetic variation vs. GRCh38.
-         - Mapping to the graph first, then projecting onto the linear reference,
-           reduces bias in regions of high structural diversity (e.g., MHC, centromeres).
+     Key design decisions:
+     ─────────────────────────────────────────────────────────────────────────────────
+     1. Why pangenome in addition to linear alignment?
+          - The T2T-CHM13v2.0 linear reference, while complete, represents a single
+            haplotype. Reads from individuals whose haplotypes diverge significantly
+            from CHM13 (e.g., African populations) are forced to align to a foreign
+            sequence, introducing systematic reference bias.
+          - The HPRC v1.1 pangenome graph encodes 94 haplotypes from 47 diverse
+            individuals, covering ~10% additional genetic variation vs. GRCh38.
+          - Mapping to the graph first, then projecting onto the linear reference,
+            reduces bias in regions of high structural diversity (e.g., MHC, centromeres).
 
-    2. vg giraffe vs. vg map:
-         - vg map: classic full-alignment to graph, accurate but slow.
-         - vg giraffe: haplotype-aware seed-extension mapper, 5–10× faster.
-           Recommended for all production pangenome mapping.
-         - giraffe requires three pre-built index files from the GBZ graph:
-             .gbz  — GBZ-format graph (sequence + topology + haplotypes)
-             .min  — LR minimizer index (from vg autoindex --workflow lr-giraffe)
-             .dist — LR distance index (from vg autoindex)
-             .zipcodes — LR zipcode index (from vg autoindex)
+     2. vg giraffe vs. vg map:
+          - vg map: classic full-alignment to graph, accurate but slow.
+          - vg giraffe: haplotype-aware seed-extension mapper, 5–10× faster.
+            Recommended for all production pangenome mapping.
+          - giraffe requires three pre-built index files from the GBZ graph:
+              .gbz  — GBZ-format graph (sequence + topology + haplotypes)
+              .min  — LR minimizer index (from vg autoindex --workflow lr-giraffe)
+              .dist — LR distance index (from vg autoindex)
+              .zipcodes — LR zipcode index (from vg autoindex)
 
-    3. Read renaming (Part 3 of visualization workflow):
-         - Zero-pad read names so lexicographic sort matches numeric sort
-         - Format: @SAMPLENAME_BARCODE.000001
-         - Critical for proper ordering in odgi visualizations
+     3. Read renaming (Part 3 of visualization workflow):
+          - Zero-pad read names so lexicographic sort matches numeric sort
+          - Format: @SAMPLENAME_BARCODE.000001
+          - Critical for proper ordering in odgi visualizations
 
-    4. Filtering (Part 5 of visualization workflow):
-         - vg filter -q 1 removes MAPQ=0 (unmapped) reads
-         - Unmapped reads produce empty paths that crash odgi build
+     4. Filtering (Part 5 of visualization workflow):
+          - vg filter -q 1 removes MAPQ=0 (unmapped) reads
+          - Unmapped reads produce empty paths that crash odgi build
 
-    5. Augmentation (Part 6 of visualization workflow):
-         - vg augment --label-paths adds read names as graph paths
-         - Essential for sample reads to appear in odgi viz
+     5. Augmentation (Part 6 of visualization workflow):
+          - vg augment --label-paths adds read names as graph paths
+          - Essential for sample reads to appear in odgi viz
 
-    6. odgi visualisation (Part 9 of visualization workflow):
-         - sample_coverage: compressed coverage with prefix merges (one row per sample)
-         - topology: 2D graph layout showing variant bubbles and complex regions
+     6. odgi visualisation (Part 9 of visualization workflow):
+          - sample_coverage: compressed coverage with prefix merges (one row per sample)
+          - topology: 2D graph layout showing variant bubbles and complex regions
 
-    7. Chromosome-level parallelism:
-         - vg giraffe is memory-intensive (~300 GB RAM for the full HPRC v1.1 graph).
-         - For HPC runs with limited RAM, use the per-chromosome subgraph strategy:
-           extract chr-specific subgraphs with `vg chunk` and map in parallel.
-         - The pipeline defaults to full-graph mapping but supports chunked mode
-           via params.vg_chunk_mode.
-======================================================================================
-*/
+     7. Chromosome-level parallelism:
+          - vg giraffe is memory-intensive (~300 GB RAM for the full HPRC v1.1 graph).
+          - For HPC runs with limited RAM, use the per-chromosome subgraph strategy:
+            extract chr-specific subgraphs with `vg chunk` and map in parallel.
+          - The pipeline defaults to full-graph mapping but supports chunked mode
+            via params.vg_chunk_mode.
+ ======================================================================================
+ */
 
 include { READ_RENAME        } from '../../modules/local/vg/main'
 include { VG_GIRAFFE         } from '../../modules/local/vg/main'
@@ -179,7 +179,9 @@ workflow PANGENOME {
     // 1. Augment each sample individually to get VGs with sample paths (--label-paths)
     // 2. Combine all augmented VGs into one graph with VG_COMBINE
     // 3. Build one ODGI from the combined graph
-    // 4. Generate visualizations:
+    // 4. Sort and Layout the full graph for high-quality 2D topology
+    // 5. Retain only reference and sample paths for clean visualization
+    // 6. Generate visualizations:
     //    a. Sample coverage heatmap (reads collapsed into one row per sample)
     //    b. 2D graph topology (shows variant bubbles, complex regions)
     //
@@ -213,7 +215,7 @@ workflow PANGENOME {
         ch_odgi = ODGI_BUILD.out.odgi
         ch_versions = ch_versions.mix(ODGI_BUILD.out.versions)
 
-        // ── Part 8: Prepare display path list ─────────────────────────────────────
+        // ── Part 8: Prepare display path list and extract subgraphs ─────────────────────
         // Extract sample IDs from the input reads channel for path matching
         // Format: sampleid_barcode for matching renamed reads
         ch_sample_ids = ch_reads.map { "${it[0].id}_${it[0].barcode}" }.collect()
@@ -225,19 +227,35 @@ workflow PANGENOME {
         ch_path_list = ODGI_PATHS_FILTER.out.path_list
         ch_versions  = ch_versions.mix(ODGI_PATHS_FILTER.out.versions)
 
-        // Extract only CHM13 + sample read paths to remove 94 HPRC haplotypes
-        // This dramatically speeds up sort/layout and cleans up visualizations
+        // Extract only CHM13 + sample read paths, compact node IDs (-O),
+        // and regenerate path list from extracted graph
         ODGI_RETAIN(
             ch_odgi,
-            ch_path_list
+            ch_path_list,
+            params.odgi_region
         )
-        ch_retained_odgi = ODGI_RETAIN.out.retained_odgi
-        ch_versions      = ch_versions.mix(ODGI_RETAIN.out.versions)
+        ch_retained_odgi  = ODGI_RETAIN.out.retained_odgi
+        ch_retained_paths = ODGI_RETAIN.out.path_list
+        ch_versions       = ch_versions.mix(ODGI_RETAIN.out.versions)
+
+        // ── Part 7: Sort the retained graph ──────────
+        ODGI_SORT(
+            ch_retained_odgi
+        )
+        ch_sorted_odgi = ODGI_SORT.out.sorted_odgi
+        ch_versions = ch_versions.mix(ODGI_SORT.out.versions)
+
+        // ── Part 8: Layout the sorted graph ──────────
+        ODGI_LAYOUT(
+            ch_sorted_odgi
+        )
+        ch_layout = ODGI_LAYOUT.out.layout
+        ch_versions = ch_versions.mix(ODGI_LAYOUT.out.versions)
 
         // ── Part 9: Generate visualizations ────────────────────────────────────────
         
         // 9a: Sample Coverage Heatmap (one row per sample via prefix merges)
-        // Create merge prefixes file from sample IDs, including the reference
+        // Create merge prefixes file from sample IDs
         ch_merge_prefixes = ch_sample_ids
             .map { samples ->
                 def prefixes = ['CHM13'] + samples.collect { it + "." }
@@ -251,31 +269,14 @@ workflow PANGENOME {
             }
 
         ODGI_VIZ_SAMPLE_COVERAGE(
-            ch_odgi,
-            ch_path_list,
-            ch_merge_prefixes,
-            params.odgi_region,
-            'null'
+            ch_sorted_odgi,
+            ch_retained_paths,
+            ch_merge_prefixes
         )
         ch_reports  = ch_reports.mix(ODGI_VIZ_SAMPLE_COVERAGE.out.sample_coverage_png)
         ch_versions = ch_versions.mix(ODGI_VIZ_SAMPLE_COVERAGE.out.versions)
 
         // 9b: 2D Graph Topology (layout + draw)
-        // Sort graph for clean node ordering
-        ODGI_SORT(
-            ch_retained_odgi
-        )
-        ch_sorted_odgi = ODGI_SORT.out.sorted_odgi
-        ch_versions    = ch_versions.mix(ODGI_SORT.out.versions)
-
-        // Compute 2D layout coordinates
-        ODGI_LAYOUT(
-            ch_sorted_odgi
-        )
-        ch_layout = ODGI_LAYOUT.out.layout
-        ch_versions = ch_versions.mix(ODGI_LAYOUT.out.versions)
-
-        // Render 2D topology visualization
         ODGI_DRAW(
             ch_sorted_odgi,
             ch_layout,
