@@ -155,6 +155,9 @@ workflow {
     ch_qc_reports = ch_qc_reports.mix(ALIGNMENT_QC.out.reports)
 
     // ── STEP 4: Methylation profiling (requires MM/ML tags from Dorado)
+    // This step is currently disabled as it requires raw pod5 data for modification probabilities.
+    // To enable, remove this block and ensure Dorado basecalling is run with a mod-aware model.
+    /*
     if (!params.skip_methylation) {
         METHYLATION (
             ch_bam,
@@ -164,6 +167,7 @@ workflow {
         )
         ch_qc_reports = ch_qc_reports.mix(METHYLATION.out.reports)
     }
+    */
 
     // ── STEP 5: Variant calling (SNPs/Indels via Clair3, SVs via Sniffles2)
     VARIANT_CALLING (
