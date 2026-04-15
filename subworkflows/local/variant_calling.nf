@@ -56,8 +56,8 @@ workflow VARIANT_CALLING {
     ch_reference_fai // path(reference.fa.fai)
 
     main:
-    ch_versions = Channel.empty()
-    ch_reports  = Channel.empty()
+    ch_versions = channel.empty()
+    ch_reports  = channel.empty()
     ch_bam_bai  = ch_bam.join(ch_bai, by: 0)
 
     // ────────────────────────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ workflow VARIANT_CALLING {
     ch_versions = ch_versions.mix(BCFTOOLS_FILTER.out.versions)
 
     BCFTOOLS_STATS ( ch_snp_vcf_filtered, 'snp_indel' )
-    ch_reports  = ch_reports.mix(BCFTOOLS_STATS.out.stats.map { it[1] })
+    ch_reports  = ch_reports.mix(BCFTOOLS_STATS.out.stats.map { it -> it[1] })
     ch_versions = ch_versions.mix(BCFTOOLS_STATS.out.versions)
 
     // ────────────────────────────────────────────────────────────────────────
@@ -105,8 +105,8 @@ workflow VARIANT_CALLING {
 
     // Build tandem-repeat channel (optional but strongly recommended)
     ch_trf_bed = params.tandem_repeats
-        ? Channel.value(file(params.tandem_repeats))
-        : Channel.value([])
+        ? channel.value(file(params.tandem_repeats))
+        : channel.value([])
 
     SNIFFLES2 (
         ch_bam_bai,
@@ -130,11 +130,11 @@ workflow VARIANT_CALLING {
 
     // Per-sample SV type/size summary for MultiQC
     SV_SUMMARY ( BGZIP_TABIX.out.compressed )
-    ch_reports  = ch_reports.mix(SV_SUMMARY.out.summary.map { it[1] })
+    ch_reports  = ch_reports.mix(SV_SUMMARY.out.summary.map { it -> it[1] })
     ch_versions = ch_versions.mix(SV_SUMMARY.out.versions)
 
     BCFTOOLS_STATS_SV ( BGZIP_TABIX.out.compressed, 'sv' )
-    ch_reports = ch_reports.mix(BCFTOOLS_STATS_SV.out.stats.map { it[1] })
+    ch_reports = ch_reports.mix(BCFTOOLS_STATS_SV.out.stats.map { it -> it[1] })
 
     emit:
     snp_vcf  = ch_snp_vcf_filtered      // [ meta, path(.vcf.gz) ] — for phasing
