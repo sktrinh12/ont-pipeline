@@ -37,12 +37,12 @@ workflow BASECALLING {
     ch_raw_reads   // [ meta, path(pod5 | fast5) ]
 
     main:
-    ch_versions = Channel.empty()
+    ch_versions = channel.empty()
 
     // ── Deprecation warning for fast5 ─────────────────────────────────────────
     ch_raw_reads
-        .filter { meta, f -> meta.input_type == 'fast5' }
-        .subscribe { meta, f ->
+        .filter { meta, _f -> meta.input_type == 'fast5' }
+        .subscribe { meta, _f ->
             log.warn "[BASECALLING] Sample '${meta.id}': fast5 format is deprecated by ONT. " +
                      "Convert to pod5 using 'pod5 convert fast5' for future runs."
         }
