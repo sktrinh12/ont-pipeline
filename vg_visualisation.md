@@ -1,0 +1,58 @@
+# `vg` visualisation
+
+To interpret and visualize a complex pangenome tangle from your `odgi` graph, follow these consolidated steps. This workflow moves from initial statistical identification to a clean, readable "train track" visualization.
+
+---
+
+### 1. Identify the Tangle
+Use `odgi stats` to find paths with high private sequence or complexity. A "tangle" is often characterized by high copy-number repeats or divergent sequences that don't align to the reference.
+
+```bash
+# Find paths with high unique/private sequence (column 4)
+odgi stats -i family.retained.og -a "#,0" | sort -k4 -nr | head -10
+```
+
+### 2. Precise Subgraph Extraction
+To avoid "InvalidSize" errors in rendering, extract a tiny window (100–200bp) where the variation occurs. Using a BED file is the most robust way to handle path names containing colons.
+
+```bash
+# Create a BED file for a 100bp micro-region
+printf "HG002_PAO83395.000091:1024-5358\t1150\t1250\n" > micro.bed
+
+# Extract the region with a context of 1 node
+odgi extract -i family.retained.og -b micro.bed -c 1 -o micro_slice.og -O
+```
+
+### 3. Format Conversion
+Convert the `odgi` binary format into a GFA bridge, then into a `vg` graph file. This ensures compatibility with the `vg` visualization engine.
+
+```bash
+# Convert OG -> GFA -> VG
+odgi view -i micro_slice.og -g > micro.gfa
+vg view -Fv micro.gfa > micro.vg
+```
+
+### 4. System Font Configuration
+To render the path-tracking pictographs (emoji icons) used by `vg`, ensure your environment has the necessary Unicode fonts installed.
+
+```bash
+# Install emoji and symbol fonts (Ubuntu/Debian)
+apt-get update && apt-get install -y fonts-noto-color-emoji fonts-dejavu
+fc-cache -fv
+```
+
+### 5. Final Visualization (SVG)
+Generate the visualization using the Path (`-p`) and Node (`-n`) flags. Outputting to **SVG** is recommended to bypass pixel-dimension limits and allow web browsers to handle font rendering for pictograph icons.
+
+```bash
+# Render to SVG with explicit font support
+vg view -dpn micro.vg | dot -Tsvg -o micro_final.svg
+```
+
+---
+
+### Key Visual Interpretations
+* **Linear Segments:** Flanking sequences where all paths (samples) are in consensus.
+* **Bubbles (Split/Rejoin):** Indicates a SNP or small Indel.
+* **Large Loops/Cycles:** Indicates a Tandem Repeat or Copy Number Variation (CNV). If a path loops back from the end of a node to an earlier node, it represents multiple copies of that sequence.
+* **Unique Colors/Icons:** Each horizontal track represents a specific haplotype. Divergence between these tracks highlights structural differences between individuals in the pangenome.
