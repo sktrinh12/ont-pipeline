@@ -47,8 +47,8 @@ workflow ALIGNMENT_QC {
     ch_reference_fai // path(reference.fa.fai)
 
     main:
-    ch_versions = Channel.empty()
-    ch_reports  = Channel.empty()
+    ch_versions = channel.empty()
+    ch_reports  = channel.empty()
 
     // ── Validate FASTQ reads ───────────────────────────────────────────────────
     // Remove malformed reads where SEQ/QUAL lengths differ to prevent minimap2
@@ -60,7 +60,7 @@ workflow ALIGNMENT_QC {
         } else {
             [meta, reads]  // Will be validated below
         }
-    }.branch { meta, reads ->
+    }.branch { _meta, reads ->
         fastq: !reads.toString().endsWith('.bam')
         ubam:  reads.toString().endsWith('.bam')
     }
@@ -105,14 +105,14 @@ workflow ALIGNMENT_QC {
     ch_bam_bai = ch_sorted_bam.join(SAMTOOLS_INDEX.out.bai, by: 0)
 
     // ── Post-alignment flagstat ───────────────────────────────────────────────
-    SAMTOOLS_FLAGSTAT ( ch_bam_bai.map { meta, bam, bai -> [ meta, bam ] } )
+    SAMTOOLS_FLAGSTAT ( ch_bam_bai.map { meta, bam, _bai -> [ meta, bam ] } )
     ch_versions = ch_versions.mix(SAMTOOLS_FLAGSTAT.out.versions)
-    ch_reports  = ch_reports.mix(SAMTOOLS_FLAGSTAT.out.stats.map { it[1] })
+    ch_reports  = ch_reports.mix(SAMTOOLS_FLAGSTAT.out.stats.map { it -> it[1] })
 
     // ── NanoPlot on aligned BAM (alignment-specific metrics) ──────────────────
-    NANOPLOT_BAM ( ch_bam_bai.map { meta, bam, bai -> [ meta, bam ] }, '' )
+    NANOPLOT_BAM ( ch_bam_bai.map { meta, bam, _bai -> [ meta, bam ] }, '' )
     ch_versions = ch_versions.mix(NANOPLOT_BAM.out.versions)
-    ch_reports  = ch_reports.mix(NANOPLOT_BAM.out.report.map { it[1] })
+    ch_reports  = ch_reports.mix(NANOPLOT_BAM.out.report.map { it -> it[1] })
 
     // ── Mosdepth coverage QC ─────────────────────────────────────────────────
     // mosdepth is the fastest coverage tool; it also produces per-window depth
@@ -123,7 +123,7 @@ workflow ALIGNMENT_QC {
         200   // window size in kb
     )
     ch_versions = ch_versions.mix(MOSDEPTH.out.versions)
-    ch_reports  = ch_reports.mix(MOSDEPTH.out.summary.map { it[1] })
+    ch_reports  = ch_reports.mix(MOSDEPTH.out.summary.map { it -> it[1] })
 
     // ── Coverage gate ─────────────────────────────────────────────────────────
     // Parse mosdepth summary to get mean genome coverage.
@@ -162,11 +162,11 @@ workflow ALIGNMENT_QC {
             log.info "[ALIGNMENT_QC] Sample '${meta.id}': coverage ${cov}× ✓"
             return [ meta + [coverage: cov], bam, bai ]
         }
-        .filter { it != null }
+        .filter { it -> it != null }
 
     emit:
-    bam      = ch_bam_with_coverage.map { meta, bam, bai -> [ meta, bam ] }
-    bai      = ch_bam_with_coverage.map { meta, bam, bai -> [ meta, bai ] }
+    bam      = ch_bam_with_coverage.map { meta, bam, _bai -> [ meta, bam ] }
+    bai      = ch_bam_with_coverage.map { meta, _bam, bai -> [ meta, bai ] }
     bam_bai  = ch_bam_with_coverage
     reports  = ch_reports
     versions = ch_versions
