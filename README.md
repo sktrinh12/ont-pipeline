@@ -1,4 +1,4 @@
-# ONT-WGS & Methylation Pipeline v1.0.0
+# ONT-WGS Pipeline
 
 A production-ready **Nextflow DSL2** pipeline for Oxford Nanopore (ONT) long-read Whole Genome Sequencing — from raw pod5 signal to structural variants, 5mC/5hmC methylation profiles, phased haplotypes, and pangenome graph projection. Dataset is the Ashkenazim jewish family trio (HG002-HG004).
 
@@ -38,8 +38,8 @@ Traditional genomics pipelines were built for short reads against a single linea
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║           ONT-WGS & METHYLATION PIPELINE v2.0.0                            ║
-║           T2T-CHM13v2.0  |  HPRC v1.1 Pangenome                           ║
+║           ONT-WGS PIPELINE                                                   ║
+║           T2T-CHM13v2.0  |  HPRC v1.1 Pangenome                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
   ┌───────────────────────────────────────────────┐
@@ -50,21 +50,9 @@ Traditional genomics pipelines were built for short reads against a single linea
                          │
             ┌────────────▼────────────┐
             │   INGESTION & QC        │
-            │   pod5 inspect          │
-            │   PycoQC (sequencing    │
-            │     summary)            │
             │   NanoPlot (per-read)   │
             │   Chopper (filter)  *1  │
             └────────────┬────────────┘
-                         │
-         ┌───────────────▼───────────────┐
-         │  BASECALLING (Dorado)          │
-         │  Model: dna_r10.4.1_e8.2_     │
-         │    400bps_sup@v4.3.0           │
-         │  → MM/ML tags (5mC + 5hmC)    │
-         │  → Simplex + Duplex *2         │
-         │  → uBAM output                │
-         └───────────────┬───────────────┘
                          │
          ┌───────────────▼───────────────┐
          │  ALIGNMENT (minimap2)          │
@@ -80,16 +68,16 @@ Traditional genomics pipelines were built for short reads against a single linea
      │  PASS  │  FAIL ──►  │   (excluded from calling)
      └──────────┬──────────┘
                 │
-   ┌────────────┼────────────────────────┐
-   │            │                        │
-   ▼            ▼                        ▼
-┌──────┐  ┌──────────────┐   ┌─────────────────────┐
-│ SNP/ │  │ STRUCTURAL   │   │ METHYLATION          │
-│INDEL │  │ VARIANTS     │   │ modkit pileup        │
-│Clair3│  │ Sniffles2    │   │ --combine-strands    │
-│+GVCF │  │ +TRF annot.*4│   │ MM/ML → bedMethyl   │
-│      │  │ .snf output  │   │ bgzip + tabix index  │
-└──┬───┘  └─────┬────────┘   └──────────────────────┘
+   ┌────────────┼
+   │            │
+   ▼            ▼
+┌──────┐  ┌──────────────┐
+│ SNP/ │  │ STRUCTURAL   │
+│INDEL │  │ VARIANTS     │
+│Clair3│  │ Sniffles2    │
+│+GVCF │  │ +TRF annot.*4│
+│      │  │ .snf output  │
+└──┬───┘  └─────┬────────┘
    │             │
    └──────┬──────┘
           │
@@ -123,14 +111,12 @@ OUTPUT TREE:
   ├── basecalling/        ← Dorado uBAMs
   ├── filtered_reads/     ← Chopper-filtered FASTQ
   ├── alignment/          ← Sorted, indexed BAMs + flagstat
-  ├── methylation/        ← bedMethyl.gz + .tbi per sample
   ├── variants/
   │   ├── snp_indel/      ← Clair3 VCF + GVCF
   │   └── sv/             ← Sniffles2 VCF + .snf
   ├── phasing/            ← Haplotagged BAMs + phased VCFs
   ├── pangenome/          ← Surjected BAMs + graph VCFs + odgi viz
   ├── multiqc/            ← Aggregated HTML QC report
-  └── pipeline_info/      ← Timeline, trace, DAG
 ```
 
 ---
@@ -147,14 +133,11 @@ OUTPUT TREE:
 ### Core Bioinformatics Tools
 | Category | Tool | Version | Notes |
 |---|---|---|---|
-| Basecalling | **Dorado** | ≥0.7.0 | GPU recommended; SUP model for maximum accuracy |
 | Read filtering | **Chopper** | ≥0.7.0 | Replaces deprecated NanoFilt |
 | QC | **NanoPlot** | ≥1.41 | Read length + quality distributions |
-| QC | **PycoQC** | ≥2.5.2 | Sequencing summary–based QC |
 | QC | **mosdepth** | ≥0.3.6 | Coverage depth + uniformity |
 | Alignment | **minimap2** | ≥2.26 | lr:hq preset for R10.4.1 |
 | Alignment | **samtools** | ≥1.18 | Sort, index, flagstat, markdup |
-| Methylation | **modkit** | ≥0.2.0 | 5mC + 5hmC pileup from MM/ML tags |
 | Small variants | **Clair3** | ≥1.0.4 | Deep-learning SNP/Indel caller |
 | SVs | **Sniffles2** | ≥2.2 | Joint-genotypable SV calling |
 | Phasing | **longphase** | ≥1.6 | Fast ONT phasing + haplotagging |
