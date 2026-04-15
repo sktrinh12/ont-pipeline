@@ -15,7 +15,7 @@ workflow REPORTING {
     ch_reports   // Mixed channel of all QC files from upstream subworkflows
 
     main:
-    ch_versions = Channel.empty()
+    ch_versions = channel.empty()
 
     ch_report_files = ch_reports.collect()
 
