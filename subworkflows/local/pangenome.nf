@@ -68,6 +68,7 @@ include { ODGI_SORT               } from '../../modules/local/odgi/main'
 include { ODGI_LAYOUT             } from '../../modules/local/odgi/main'
 include { ODGI_DRAW               } from '../../modules/local/odgi/main'
 include { ODGI_VIZ_SAMPLE_COVERAGE } from '../../modules/local/odgi/main'
+include { VG_DRAW_TOPOLOGY         } from '../../modules/local/odgi/main'
 include { SAMTOOLS_SORT      } from '../../modules/local/samtools/main'
 include { SAMTOOLS_INDEX     } from '../../modules/local/samtools/main'
 
@@ -78,8 +79,8 @@ workflow PANGENOME {
     ch_gbz         // path(hprc_v1.1.gbz)
 
     main:
-    ch_versions = Channel.empty()
-    ch_reports  = Channel.empty()
+    ch_versions = channel.empty()
+    ch_reports  = channel.empty()
 
     // Validate LR index files - use pangenome_prefix to derive paths
     def prefix = params.pangenome_prefix ?: 'chr22_lr'
@@ -142,7 +143,7 @@ workflow PANGENOME {
     // ── vg stats: mapping quality report ─────────────────────────────────────────
     // Reports: total reads, mapped %, perfect mappings, mapping quality distribution
     VG_STATS ( ch_filtered_gam )
-    ch_reports  = ch_reports.mix(VG_STATS.out.stats.map { it[1] })
+    ch_reports  = ch_reports.mix(VG_STATS.out.stats.map { it -> it[1] })
     ch_versions = ch_versions.mix(VG_STATS.out.versions)
 
     // ── vg surject: project graph alignments → linear BAM ────────────────────────
@@ -255,23 +256,11 @@ workflow PANGENOME {
         // ── Part 9: Generate visualizations ────────────────────────────────────────
         
         // 9a: Sample Coverage Heatmap (one row per sample via prefix merges)
-        // Create merge prefixes file from sample IDs
-        ch_merge_prefixes = ch_sample_ids
-            .map { samples ->
-                def prefixes = ['CHM13'] + samples.collect { it + "." }
-                prefixes.unique().sort()
-                prefixes.join('\n') + '\n'
-            }
-            .map { content ->
-                def f = file('merge_prefixes.txt')
-                f.text = content
-                f
-            }
-
+        // Pass the list of sample IDs to be handled dynamically in the process
         ODGI_VIZ_SAMPLE_COVERAGE(
             ch_sorted_odgi,
             ch_retained_paths,
-            ch_merge_prefixes
+            ch_sample_ids
         )
         ch_reports  = ch_reports.mix(ODGI_VIZ_SAMPLE_COVERAGE.out.sample_coverage_png)
         ch_versions = ch_versions.mix(ODGI_VIZ_SAMPLE_COVERAGE.out.versions)
@@ -284,6 +273,17 @@ workflow PANGENOME {
         )
         ch_reports  = ch_reports.mix(ODGI_DRAW.out.topology_png)
         ch_versions = ch_versions.mix(ODGI_DRAW.out.versions)
+
+        // 9c: VG-native Graph Topology (vg view + dot) - Region-based micro-visualization
+        if (params.region_bed_file) {
+            VG_DRAW_TOPOLOGY(
+                ch_sorted_odgi,
+                file(params.region_bed_file),
+                params.odgi_region
+            )
+            ch_reports  = ch_reports.mix(VG_DRAW_TOPOLOGY.out.topology_svg, VG_DRAW_TOPOLOGY.out.qc_file)
+            ch_versions = ch_versions.mix(VG_DRAW_TOPOLOGY.out.versions)
+        }
     }
 
     emit:
