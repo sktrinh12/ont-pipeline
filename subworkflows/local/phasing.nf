@@ -48,8 +48,8 @@ workflow PHASING {
     ch_reference_fai // path(reference.fa.fai)
 
     main:
-    ch_versions = Channel.empty()
-    ch_reports  = Channel.empty()
+    ch_versions = channel.empty()
+    ch_reports  = channel.empty()
 
     ch_bam_bai = ch_bam.join(ch_bai, by: 0)
     ch_phase_input = ch_bam_bai.join(ch_snp_vcf, by: 0)
@@ -75,7 +75,7 @@ workflow PHASING {
 
     // ── Phase block statistics ────────────────────────────────────────────────
     PHASE_STATS ( ch_phased_vcf )
-    ch_reports  = ch_reports.mix(PHASE_STATS.out.stats.map { it[1] })
+    ch_reports  = ch_reports.mix(PHASE_STATS.out.stats.map { it -> it[1] })
     ch_versions = ch_versions.mix(PHASE_STATS.out.versions)
 
     // ── longphase haplotag ────────────────────────────────────────────────────
