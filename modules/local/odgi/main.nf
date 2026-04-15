@@ -1,6 +1,80 @@
 /*
-==========================================================================================
+========================================================================================
+    MODULE: VG_DRAW_TOPOLOGY
+    Tool   : odgi (>=0.9.0), vg (>=1.73), dot (graphviz)
+    Purpose: Render 2D graph topology visualization for specific micro-regions using BED file.
+             Handles complex path names with colons by using BED file coordinates.
+             Designed for 50bp micro-regions to avoid OOM errors.
+========================================================================================
+*/
+
+process VG_DRAW_TOPOLOGY {
+    tag         "$meta.id"
+    label       'process_low'
+    publishDir  "${params.outdir}/qc/pangenome", mode: 'copy'
+
+    container   'sktrinh12/vg-odgi:latest'
+
+    input:
+    tuple val(meta), path(odgi_graph)
+    path(region_bed_file)
+    val(region_label)
+
+    output:
+    path "${meta.id}.vg_topology.svg", emit: topology_svg
+    path "${meta.id}_vg_paths_count.txt", emit: qc_file
+    path "versions.yml",               emit: versions
+
+    script:
+    def prefix = task.ext.prefix ?: meta.id
+    def bed_file = file(params.region_bed_file)
+    
+    """
+    # Extract micro-region using BED file
+    odgi extract -i ${odgi_graph} -b ${bed_file} -c 1 -o ${prefix}_micro_slice.og -O
+
+    # Convert OG to GFA
+    odgi view -i ${prefix}_micro_slice.og -g > ${prefix}_micro.gfa
+
+    # Convert GFA to VG with newer correct method
+    vg convert -g ${prefix}_micro.gfa -p > ${prefix}_micro.vg
+
+    # Check VG file has content (QC) - stop pipeline if empty
+    vg paths -L -v ${prefix}_micro.vg | wc -l > ${prefix}_vg_paths_count.txt
+    VG_PATH_COUNT=\$(cat ${prefix}_vg_paths_count.txt)
+    if [ \$VG_PATH_COUNT -eq 0 ]; then
+        echo "ERROR: VG file is empty (0 paths found). Region extraction failed." >&2
+        echo "Check BED file path and coordinates." >&2
+        exit 1
+    fi
+
+    # Generate SVG from VG file
+    vg view -dpn ${prefix}_micro.vg | dot -Tsvg -o ${prefix}.vg_topology.svg
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        odgi: \$(odgi version 2>&1 | head -1 | awk '{print \$2}')
+        vg: \$(vg version 2>&1 | head -1 | awk '{print \$2}')
+        dot: \$(dot -V | head -1 | awk '{print \$3}')
+    END_VERSIONS
+    """
+
+    stub:
+    """
+    touch ${meta.id}.vg_topology.svg
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        odgi: "stub"
+        vg: "stub"
+        dot: "stub"
+    END_VERSIONS
+    """
+}
+
+/*
+=========================================================================================
     MODULE: ODGI_BUILD
+
     Tool   : vg (>=1.73), odgi (>=0.9.0)
     Purpose: Build odgi graph from augmented VG.
     Notes  : - grep removes empty paths (P lines ending in '*') that crash odgi
@@ -12,6 +86,7 @@
 process ODGI_BUILD {
     tag         "$meta.id"
     label       'process_low'
+    publishDir  "${params.outdir}/qc/pangenome/graphs", mode: 'copy'
 
     container   'sktrinh12/vg-odgi:latest'
 
@@ -118,6 +193,7 @@ process ODGI_PATHS_FILTER {
 process ODGI_RETAIN {
     tag         "$meta.id"
     label       'process_low'
+    publishDir  "${params.outdir}/qc/pangenome/graphs", mode: 'copy'
 
     container   'sktrinh12/vg-odgi:latest'
 
@@ -134,7 +210,6 @@ process ODGI_RETAIN {
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"
     // Extract the reference path name from region (e.g. "CHM13#0#chr22" from "CHM13#0#chr22:0-*")
-    def ref_path = region ? region.split(':')[0] : ""
     def region_arg = region ? "-r ${region}" : ""
     """
     odgi extract \\
@@ -292,7 +367,6 @@ process ODGI_DRAW {
 
     script:
     def prefix      = task.ext.prefix ?: meta.id
-    def region_arg  = region && region != 'null' ? "-r ${region}" : ""
     """
     odgi draw \\
         -i ${retained_odgi} \\
@@ -388,7 +462,7 @@ process ODGI_VIZ_SAMPLE_COVERAGE {
     input:
     tuple val(meta), path(odgi)
     path(path_list)
-    path(merge_prefixes)
+    val(sample_ids)
 
     output:
     path "${meta.id}.sample_coverage.png", emit: sample_coverage_png
@@ -396,12 +470,26 @@ process ODGI_VIZ_SAMPLE_COVERAGE {
 
     script:
     def prefix = task.ext.prefix ?: meta.id
+    def sample_list = sample_ids.join(' ')
+    
+    // Create merge_prefixes.txt dynamically: CHM13 followed by all sample IDs
     """
+    echo "CHM13" > merge_prefixes.txt
+    for id in ${sample_list}; do
+        echo "\$id" >> merge_prefixes.txt
+    done
+
+    # Debug: Print graph paths and merge file to stderr for troubleshooting
+    echo "--- DEBUG: Merge Prefixes ---" >&2
+    cat merge_prefixes.txt >&2
+    echo "--- DEBUG: First 10 Graph Paths ---" >&2
+    odgi paths -i ${odgi} -L | head -n 10 >&2
+
     odgi viz \\
         -i ${odgi} \\
         -o ${prefix}.sample_coverage.png \\
         -p ${path_list} \\
-        -M ${merge_prefixes} \\
+        -M merge_prefixes.txt \\
         -P \\
         -x 2000 -y 300 \\
         -t ${task.cpus}
