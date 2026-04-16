@@ -1,6 +1,6 @@
 # ONT-WGS Pipeline
 
-A production-ready **Nextflow DSL2** pipeline for Oxford Nanopore (ONT) long-read Whole Genome Sequencing — from raw pod5 signal to structural variants, 5mC/5hmC methylation profiles, phased haplotypes, and pangenome graph projection. Dataset is the Ashkenazim jewish family trio (HG002-HG004).
+A production-ready **Nextflow DSL2** pipeline for Oxford Nanopore (ONT) long-read Whole Genome Sequencing — from raw pod5 signal to structural variants, phased haplotypes, and pangenome graph projection. Dataset is the Ashkenazim jewish family trio (HG002-HG004).
 
 Refer to [concepts](./concepts.md) for details on the biology and tool use of the pipeline.
 
@@ -29,7 +29,6 @@ Traditional genomics pipelines were built for short reads against a single linea
 - **R10.4.1 ONT chemistry** with Dorado SUP basecalling (~99.5% per-read accuracy)
 - **T2T-CHM13v2.0** as the primary linear reference (the first complete human genome — 8% more sequence than GRCh38, complete centromeres, no gaps)
 - **HPRC v1.1 pangenome graph** (94 haplotypes from 47 diverse individuals) to eliminate reference bias
-- **Native methylation** from MM/ML tags — no bisulfite treatment, no conversion artefacts
 - **Duplex basecalling** for Q50+ accuracy reads (where applicable)
 
 ---
@@ -181,20 +180,6 @@ nextflow run main.nf \
   -resume
 ```
 
-- Run (pod5 input, with GPU basecalling)
-
-```bash
-nextflow run main.nf \
-  -profile test,docker \
-  --input samplesheet.csv \
-  --reference ./chm13_chr22.fa \
-  --tandem_repeats ./chm13v2.0_chr22_repeats.bed \
-  --pangenome_gbz /refs/hprc-v1.1-mc-chm13.gbz \
-  --duplex true \
-  --outdir results/ \
-  -resume
-```
-
 ---
 
 ## Parameters Reference
@@ -241,9 +226,6 @@ nextflow run main.nf \
 
 ```
 results/
-├── basecalling/
-│   └── {sample}/
-│       └── {sample}.ubam                  ← Dorado uBAM (MM/ML tags intact)
 ├── filtered_reads/
 │   └── {sample}/
 │       └── {sample}.filtered.fastq.gz     ← Chopper-filtered reads
@@ -252,11 +234,6 @@ results/
 │       ├── {sample}.bam                   ← Sorted, indexed, markdup BAM
 │       ├── {sample}.bam.bai
 │       └── {sample}.flagstat
-├── methylation/
-│   └── {sample}/
-│       ├── {sample}.bedmethyl.gz          ← Per-CpG 5mC/5hmC calls
-│       ├── {sample}.bedmethyl.gz.tbi      ← Tabix index
-│       └── {sample}_modkit_summary.tsv
 ├── variants/
 │   ├── snp_indel/
 │   │   └── {sample}/
@@ -303,19 +280,6 @@ CHM13v2.0, while complete, represents a single haplotype — from a complete hyd
 - Enables calling of alleles that simply do not exist in any single linear reference
 - Produces surjected BAMs that retain linear-reference coordinates for compatibility
 
-### Why native methylation instead of bisulfite sequencing?
-Bisulfite sequencing (BS-seq, WGBS) involves sodium bisulfite treatment that converts unmethylated cytosines to uracil. This:
-- Degrades ~95% of the input DNA
-- Cannot distinguish 5mC from 5hmC (both resist conversion)
-- Introduces conversion artefacts, particularly at CHH and CHG contexts
-- Cannot be combined with variant calling on the same library
-
-Dorado + modkit extracts methylation information from the raw electrical signal via learned probabilistic models. MM/ML tags encode per-read, per-base modification probabilities for each cytosine in a CpG context. This approach:
-- Requires no additional library preparation
-- Simultaneously produces sequence and methylation data from one run
-- Distinguishes 5mC (m) from 5hmC (h) when using a combined model
-- Is lower cost per sample than WGBS at equivalent depth
-
 ### Why longphase instead of WhatsHap?
 WhatsHap is the gold standard for short-read phasing and is well-integrated with GATK pipelines. For ONT long reads, longphase offers:
 - 5–10× speed improvement (critical at WGS scale)
@@ -342,11 +306,3 @@ glnexus_cli \
   sample1.gvcf.gz sample2.gvcf.gz sample3.gvcf.gz \
   > cohort_snp.bcf
 ```
-
----
-
-> This pipeline is validated on a Chr22 subset of the HG002 HPRC dataset (GIAB benchmark sample) using the following:
-> - ~15× coverage of Chr22 (ONT R10.4.1 SUP)
-> - Pre-basecalled FASTQ (skip_basecalling=true for the test profile)
-> - GIAB v4.2.1 high-confidence SNP/Indel truthset for benchmarking
-> - GIAB T2T-CHM13 SV truthset for SV benchmarking
