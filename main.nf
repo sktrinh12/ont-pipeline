@@ -3,7 +3,7 @@ nextflow.enable.dsl = 2
 
 /*
 =======================================================================================
-    SCALABLE ONT-WGS & METHYLATION PIPELINE (T2T + Pangenome)
+    SCALABLE ONT-WGS PIPELINE (T2T + Pangenome)
 =======================================================================================
     Author      : ONT Genomics Pipeline
     Version     : 1.0.0
@@ -15,9 +15,7 @@ nextflow.enable.dsl = 2
 
 // ── Import subworkflows ──────────────────────────────────────────────────────
 include { INGESTION_QC       } from './subworkflows/local/ingestion_qc'
-include { BASECALLING        } from './subworkflows/local/basecalling'
 include { ALIGNMENT_QC       } from './subworkflows/local/alignment_qc'
-include { METHYLATION        } from './subworkflows/local/methylation'
 include { VARIANT_CALLING    } from './subworkflows/local/variant_calling'
 include { PHASING            } from './subworkflows/local/phasing'
 include { PANGENOME          } from './subworkflows/local/pangenome'
@@ -34,9 +32,6 @@ def validateParams() {
     if (params.input && !file(params.input).exists()) {
         errors << "ERROR: Samplesheet not found: ${params.input}"
     }
-    if (params.skip_basecalling && !params.input) {
-        errors << "ERROR: --skip_basecalling requires --input"
-    }
     if (!params.reference) {
         errors << "ERROR: --reference (T2T-CHM13v2.0 FASTA) is required"
     }
@@ -52,14 +47,11 @@ def validateParams() {
 def printHeader() {
     log.info """
     ╔═══════════════════════════════════════════════════════════════╗
-    ║         ONT-WGS & METHYLATION PIPELINE  v${workflow.manifest.version}            ║
+    ║         ONT-WGS PIPELINE  v${workflow.manifest.version}            ║
     ╠═══════════════════════════════════════════════════════════════╣
     ║  Input          : ${params.input ?: params.input_dir}
     ║  Reference      : ${params.reference}
     ║  Pangenome GBZ  : ${params.pangenome_gbz ?: 'DISABLED'}
-    ║  Skip Basecall  : ${params.skip_basecalling}
-    ║  Duplex Mode    : ${params.duplex}
-    ║  Methylation    : ${!params.skip_methylation}
     ║  Phasing        : ${!params.skip_phasing}
     ║  Output Dir     : ${params.outdir}
     ╚═══════════════════════════════════════════════════════════════╝
@@ -135,14 +127,9 @@ workflow {
         ? channel.empty()
         : INGESTION_QC.out.validated_reads.filter { meta, _f -> meta.input_type in ['pod5','fast5'] }
 
-    if (!params.skip_basecalling) {
-        BASECALLING ( ch_for_basecalling )
-        ch_basecalled = BASECALLING.out.reads
-    } else {
-        // Use pre-basecalled FASTQ directly
-        ch_basecalled = INGESTION_QC.out.validated_reads
-            .filter { meta, _f -> meta.input_type =~ /fastq/ }
-    }
+    // Use pre-basecalled FASTQ directly
+    ch_basecalled = INGESTION_QC.out.validated_reads
+        .filter { meta, _f -> meta.input_type =~ /fastq/ }
 
     // ── STEP 3: Alignment to T2T-CHM13v2.0 + post-alignment QC
     ALIGNMENT_QC (
@@ -153,21 +140,6 @@ workflow {
     ch_bam       = ALIGNMENT_QC.out.bam
     ch_bai       = ALIGNMENT_QC.out.bai
     ch_qc_reports = ch_qc_reports.mix(ALIGNMENT_QC.out.reports)
-
-    // ── STEP 4: Methylation profiling (requires MM/ML tags from Dorado)
-    // This step is currently disabled as it requires raw pod5 data for modification probabilities.
-    // To enable, remove this block and ensure Dorado basecalling is run with a mod-aware model.
-    /*
-    if (!params.skip_methylation) {
-        METHYLATION (
-            ch_bam,
-            ch_bai,
-            ch_reference,
-            ch_reference_fai
-        )
-        ch_qc_reports = ch_qc_reports.mix(METHYLATION.out.reports)
-    }
-    */
 
     // ── STEP 5: Variant calling (SNPs/Indels via Clair3, SVs via Sniffles2)
     VARIANT_CALLING (
