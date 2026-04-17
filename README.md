@@ -29,7 +29,6 @@ Traditional genomics pipelines were built for short reads against a single linea
 - **R10.4.1 ONT chemistry** with Dorado SUP basecalling (~99.5% per-read accuracy)
 - **T2T-CHM13v2.0** as the primary linear reference (the first complete human genome — 8% more sequence than GRCh38, complete centromeres, no gaps)
 - **HPRC v1.1 pangenome graph** (94 haplotypes from 47 diverse individuals) to eliminate reference bias
-- **Duplex basecalling** for Q50+ accuracy reads (where applicable)
 
 ---
 
@@ -43,7 +42,7 @@ Traditional genomics pipelines were built for short reads against a single linea
 
   ┌───────────────────────────────────────────────┐
   │  INPUT                                        │
-  │  pod5 (preferred)  /  fast5  /  fastq.gz      │
+  │  fastq.gz                                     │
   │  Local  |  S3  |  Samplesheet CSV             │
   └──────────────────────┬────────────────────────┘
                          │
@@ -107,7 +106,6 @@ Traditional genomics pipelines were built for short reads against a single linea
 
 OUTPUT TREE:
   results/
-  ├── basecalling/        ← Dorado uBAMs
   ├── filtered_reads/     ← Chopper-filtered FASTQ
   ├── alignment/          ← Sorted, indexed BAMs + flagstat
   ├── variants/
@@ -193,14 +191,6 @@ nextflow run main.nf \
 | `--reference` | **required** | T2T-CHM13v2.0 FASTA |
 | `--tandem_repeats` | null | CHM13-specific TRF BED (strongly recommended) |
 | `--pangenome_gbz` | null | HPRC v1.1 GBZ graph (enables pangenome step) |
-
-### Basecalling (Dorado)
-| Parameter | Default | Description |
-|---|---|---|
-| `--skip_basecalling` | false | Skip basecalling (use FASTQ input) |
-| `--dorado_model` | `dna_r10.4.1_e8.2_400bps_sup@v4.3.0` | Dorado model (must match chemistry) |
-| `--duplex` | false | Enable duplex basecalling |
-| `--dorado_min_qscore` | 10 | Q-score filter at basecalling |
 
 ### Read Filtering (Chopper — applied to FASTQ inputs)
 | Parameter | Default | Description |
